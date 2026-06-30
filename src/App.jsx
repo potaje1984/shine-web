@@ -5,13 +5,15 @@ import ProtectedRoute from './components/ProtectedRoute'
 import Home from './pages/Home'
 import Admin from './pages/Admin'
 import Login from './pages/Login'
+import PaymentSettings from './pages/PaymentSettings'
 
 /**
  * Layout raíz + rutas:
- *   '/'      → Home (Hero + Servicios + Cómo funciona + Formulario)
- *   '/login' → Página de inicio de sesión (email + password)
- *   '/admin' → Panel de administración (protegido por ProtectedRoute)
- *   '*'      → 404
+ *   '/'                          → Home
+ *   '/login'                     → Login (email + password)
+ *   '/admin'                     → Panel de pedidos (protegido)
+ *   '/admin/payment-settings'    → Configuración de pago (protegido)
+ *   '*'                          → 404
  */
 export default function App() {
   return (
@@ -23,12 +25,20 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
 
-          {/* Ruta protegida — requiere usuario autenticado */}
+          {/* Rutas protegidas — requieren usuario autenticado */}
           <Route
             path="/admin"
             element={
               <ProtectedRoute>
                 <Admin />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/payment-settings"
+            element={
+              <ProtectedRoute>
+                <PaymentSettings />
               </ProtectedRoute>
             }
           />

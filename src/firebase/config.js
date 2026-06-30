@@ -19,6 +19,7 @@
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
 import { getAuth } from 'firebase/auth'
+import { getFunctions } from 'firebase/functions'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -43,6 +44,11 @@ export const db = getFirestore(app)
 // Después crea tu usuario admin en:
 //   Firebase Console → Authentication → Users → Add user
 export const auth = getAuth(app)
+
+// Functions — cliente para invocar Cloud Functions (setPaymentSecret,
+// createCheckoutSession). En desarrollo puedes usar un emulador local:
+//   connectFunctionsEmulator(functions, 'localhost', 5001)
+export const functions = getFunctions(app)
 
 // Nombre de la colección central de pedidos
 export const ORDERS_COLLECTION = 'orders'

@@ -37,6 +37,12 @@ lerna-debug.log*
 .firebase
 firebase-debug.log
 firestore-debug.log
+runtimeconfig.json
+
+# Cloud Functions (se instalan aparte en /functions)
+functions/node_modules
+functions/lib
+functions/.runtimeconfig.json
 
 # OS
 Thumbs.db

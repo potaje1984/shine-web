@@ -1,4 +1,5 @@
 import AdminPanel from '../components/AdminPanel'
+import AdminNav from '../components/AdminNav'
 import { useAuth } from '../context/AuthContext'
 
 /**
@@ -19,7 +20,9 @@ export default function Admin() {
 
   return (
     <div className="container-page py-10">
-      <header className="mb-8">
+      <AdminNav />
+
+      <header className="mt-6 mb-8">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-slate-900 text-white">

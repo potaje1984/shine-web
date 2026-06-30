@@ -13,10 +13,13 @@ Web profesional de **servicios de lavandería y limpieza a domicilio**. Aplicaci
 | **Home (`/`)** | Hero, servicios, "cómo funciona" y formulario de pedido integrado. |
 | **Formulario dinámico** | El campo *Tipo de Servicio* (Lavandería / Limpieza) muestra campos adicionales específicos. |
 | **Admin (`/admin`)** | Tabla de todos los pedidos con filtros por tipo y toggle de estado Pendiente ⇄ Completado. **Protegido con Firebase Auth.** |
+| **Admin (`/admin/payment-settings`)** | Configuración de la pasarela de pago (Stripe / Mercado Pago). **Protegido.** |
 | **Login (`/login`)** | Inicio de sesión email + password con `signInWithEmailAndPassword`. |
 | **ProtectedRoute** | Componente que envuelve rutas privadas; redirige a `/login` si no hay sesión. |
 | **Firebase Firestore** | Persistencia en tiempo real con estructura normalizada de pedidos. |
 | **Firebase Auth** | Email/Password. Sesión persistente (localStorage). |
+| **Firebase Cloud Functions** | Procesamiento seguro de pagos Stripe + webhooks. |
+| **Stripe / Mercado Pago** | Pasarela de pago con claves gestionadas de forma segura. |
 | **Diseño responsive** | Mobile-first, accesible y con paleta fresca (azul/amarillo). |
 
 ### Campos dinámicos del formulario
@@ -155,6 +158,7 @@ shine-web/
 | `/` | `Home` | ❌ | Landing + formulario de pedido |
 | `/login` | `Login` | ❌ | Inicio de sesión admin |
 | `/admin` | `Admin` | ✅ | Panel de gestión de pedidos |
+| `/admin/payment-settings` | `PaymentSettings` | ✅ | Configuración de la pasarela de pago |
 | `*` | — | ❌ | Página 404 |
 
 ### Flujo de autenticación
@@ -192,15 +196,79 @@ spinner    ┌─┴──┐
 
 ---
 
+## 💳 Pasarela de pago (Stripe / Mercado Pago)
+
+### Arquitectura de seguridad
+
+El principio fundamental es que **las secret keys nunca tocan el navegador del cliente ni Firestore**. Solo se procesan dentro de Cloud Functions donde el cliente no puede acceder a ellas.
+
+```
+┌─────────────────┐   publishableKey     ┌──────────────┐
+│  Admin Browser  │ ─────────────────→   │   Firestore  │
+│  (frontend)     │                      │  settings/   │
+└────────┬────────┘                      └──────────────┘
+         │
+         │ secretKey (HTTPS Callable)
+         ↓
+┌────────────────────┐  process.env    ┌──────────────┐
+│ setPaymentSecret   │ ←─────────────  │ Cloud KMS    │
+│  Cloud Function    │                 │ (encriptado) │
+└────────────────────┘                 └──────────────┘
+
+┌────────────────────┐  process.env    ┌──────────────┐
+│createCheckoutSes   │ ←─────────────  │ Cloud Run env│
+│  Cloud Function    │                 │  vars        │
+└────────────────────┘                 └──────────────┘
+```
+
+### Reglas de oro
+
+| Tipo de clave | Dónde guardarla | Por qué |
+|---|---|---|
+| `pk_test_*` / `pk_live_*` (publishable) | ✅ Firestore `settings/` | Pública por diseño |
+| `sk_test_*` / `sk_live_*` (secret) | ✅ `firebase functions:secrets` | Solo servidor |
+| `whsec_*` (webhook secret) | ✅ `firebase functions:secrets` | Solo servidor |
+| Cualquier `sk_*` | ❌ NUNCA en `.env` del frontend | Vite expone `VITE_*` al navegador |
+| Cualquier `sk_*` | ❌ NUNCA en Firestore | Aunque la colección esté protegida, viajaría al navegador del admin |
+
+### Configuración
+
+1. **Frontend**: rellena la publishable key desde `/admin/payment-settings`.
+2. **Backend**: instala y despliega las Cloud Functions:
+
+   ```bash
+   cd functions
+   npm install
+   firebase functions:secrets:set STRIPE_SECRET_KEY
+   firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
+   firebase deploy --only functions
+   ```
+
+3. **Stripe Dashboard**: configura el webhook apuntando a tu Cloud Function.
+   Mira `functions/README.md` para instrucciones detalladas.
+
+### Flujo de checkout
+
+1. Cliente rellena pedido → se crea documento en `orders/`
+2. Frontend invoca `createCheckoutSession({ orderId, amount, currency, ... })`
+3. Cloud Function crea Stripe Checkout Session y devuelve `{ url, sessionId }`
+4. Frontend redirige a `url` (Stripe Checkout)
+5. Cliente paga → Stripe envía webhook a `stripeWebhook`
+6. Cloud Function actualiza `paymentStatus: 'paid'` en el pedido
+
+---
+
 ## 🛣️ Roadmap sugerido
 
-- [ ] Firebase Auth para proteger `/admin`
+- [x] Firebase Auth para proteger `/admin`
+- [x] Pasarela de pago (Stripe) con Cloud Functions
 - [ ] Notificaciones por email/WhatsApp al crear pedido
-- [ ] Pasarela de pago (Stripe / PayPal)
 - [ ] Dashboard con gráficas de ingresos
 - [ ] Multi-idioma (i18n)
 - [ ] PWA con notificaciones push
 - [ ] Integración con Google Maps para estimar tiempo de recogida
+- [ ] Custom claims para roles admin/cliente
+- [ ] Soporte completo de Mercado Pago (Preference + Webhook)
 
 ---
 
