@@ -2,17 +2,67 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Shine — Servicios profesionales de lavandería y limpieza a domicilio. Recoge tu pedido en minutos." />
-    <meta name="theme-color" content="#10b6ef" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700;800&display=swap" rel="stylesheet">
+    <meta name="description" content="Shine — Servicios profesionales de lavandería y limpieza a domicilio." />
     <title>Shine · Lavandería y Limpieza a domicilio</title>
+    <script>
+      // ───────────────────────────────────────────────────────────────
+      // GitHub Pages SPA redirect trick
+      // ───────────────────────────────────────────────────────────────
+      // GitHub Pages no soporta rewrites del servidor, así que cuando
+      // alguien entra directamente a /admin/payment-settings GitHub
+      // sirve este 404.html. Aquí redirigimos al index.html con la
+      // ruta codificada en query string, y la app la reconstruye.
+      //
+      // Funciona para:
+      //   • User pages  → https://user.github.io/admin/...
+      //   • Project pages → https://user.github.io/repo/admin/...
+      (function () {
+        var pathSegmentsToKeep = 0
+
+        // Detectar si es project page (URL tipo /repo-name/...)
+        var l = window.location
+        var repoRegex = /^\/([^/]+)\/([^/]+)/
+        var match = l.pathname.match(repoRegex)
+
+        // Si el primer segmento no es una ruta conocida del SPA
+        // y no es la raíz, asumimos que es un repo name
+        var knownRoutes = ['admin', 'login', 'assets', 'favicon.svg']
+        if (match && knownRoutes.indexOf(match[1]) === -1 && match[1] !== match[2]) {
+          pathSegmentsToKeep = 1
+        }
+
+        var replacement = '/' + Array(pathSegmentsToKeep + 1).join('') + '#/'
+
+        // Convertir /admin/payment-settings → /#/admin/payment-settings
+        // (manteniendo el segmento del repo si es project page)
+        var newPath = l.pathname.replace(
+          new RegExp('^(/' + (pathSegmentsToKeep ? '[^/]+/' : '') + ')'),
+          '$1'
+        )
+
+        // Construir la nueva URL usando hash routing como puente
+        var redirect = l.protocol + '//' + l.host + '/' +
+          (pathSegmentsToKeep ? match[1] + '/' : '') +
+          '#/redirect?to=' + encodeURIComponent(
+            l.pathname.slice(pathSegmentsToKeep ? ('/' + match[1]).length : 0) +
+            l.search + l.hash
+          )
+
+        console.log('[SPA redirect]', l.href, '→', redirect)
+        l.replace(redirect)
+      })()
+    </script>
+    <style>
+      body { font-family: system-ui, sans-serif; background: #f8fafc; color: #475569; text-align: center; padding: 4rem 1rem; }
+      .spinner { display: inline-block; width: 32px; height: 32px; border: 3px solid #e2e8f0; border-top-color: #10b6ef; border-radius: 50%; animation: spin 0.8s linear infinite; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      p { margin-top: 1rem; font-size: 0.875rem; }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
+    <div class="spinner"></div>
+    <p>Redirigiendo…</p>
   </body>
 </html>
