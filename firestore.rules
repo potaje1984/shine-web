@@ -1,0 +1,27 @@
+# Reglas de Firestore recomendadas para Shine
+# Copia este contenido en: Firebase Console → Firestore → Rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Pedidos: cualquier usuario puede crear; solo admin lee/modifica.
+    // En producción, sustituye la condición de lectura por una comprobación
+    // de autenticación / custom claim de admin.
+    match /orders/{orderId} {
+      // Crear pedidos: abierto (formulario público)
+      allow create: if true;
+
+      // Lectura / modificación: en desarrollo abierto.
+      // ⚠️  EN PRODUCCIÓN, reemplazar por:
+      //   allow read, update, delete: if request.auth != null
+      //     && request.auth.token.admin == true;
+      allow read, update, delete: if true;
+    }
+
+    // Bloquear todo lo demás por defecto
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
