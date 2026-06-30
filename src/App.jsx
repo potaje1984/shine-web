@@ -1,13 +1,16 @@
 import { Routes, Route, Link } from 'react-router-dom'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
+import ProtectedRoute from './components/ProtectedRoute'
 import Home from './pages/Home'
 import Admin from './pages/Admin'
+import Login from './pages/Login'
 
 /**
  * Layout raíz + rutas:
  *   '/'      → Home (Hero + Servicios + Cómo funciona + Formulario)
- *   '/admin' → Panel de administración
+ *   '/login' → Página de inicio de sesión (email + password)
+ *   '/admin' → Panel de administración (protegido por ProtectedRoute)
  *   '*'      → 404
  */
 export default function App() {
@@ -18,7 +21,18 @@ export default function App() {
       <main className="flex-1">
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/admin" element={<Admin />} />
+          <Route path="/login" element={<Login />} />
+
+          {/* Ruta protegida — requiere usuario autenticado */}
+          <Route
+            path="/admin"
+            element={
+              <ProtectedRoute>
+                <Admin />
+              </ProtectedRoute>
+            }
+          />
+
           <Route
             path="*"
             element={

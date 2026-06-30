@@ -18,6 +18,7 @@
 
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
+import { getAuth } from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -33,6 +34,15 @@ const app = initializeApp(firebaseConfig)
 
 // Firestore — base de datos de pedidos
 export const db = getFirestore(app)
+
+// Auth — autenticación de usuarios (email + password)
+//
+// ⚠️  Activa el método Email/Password en:
+//   Firebase Console → Authentication → Sign-in method → Email/Password → Enable
+//
+// Después crea tu usuario admin en:
+//   Firebase Console → Authentication → Users → Add user
+export const auth = getAuth(app)
 
 // Nombre de la colección central de pedidos
 export const ORDERS_COLLECTION = 'orders'

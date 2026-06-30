@@ -1,12 +1,31 @@
-import { NavLink, Link } from 'react-router-dom'
+import { useState } from 'react'
+import { NavLink, Link, useNavigate } from 'react-router-dom'
+import { useAuth } from '../context/AuthContext'
 
 /**
  * Barra de navegación superior — fija, con efecto blur al hacer scroll.
  * Muestra el logo de Shine, navegación principal y un CTA de pedido.
+ * Si el usuario está logueado, muestra el correo y un botón de logout.
  */
 export default function Navbar() {
+  const { isAuthenticated, displayName, logout } = useAuth()
+  const navigate = useNavigate()
+  const [loggingOut, setLoggingOut] = useState(false)
+
   const linkBase =
     'px-3 py-2 rounded-lg text-sm font-medium transition-colors'
+
+  async function handleLogout() {
+    setLoggingOut(true)
+    try {
+      await logout()
+      navigate('/')
+    } catch (err) {
+      console.error('Error al cerrar sesión:', err)
+    } finally {
+      setLoggingOut(false)
+    }
+  }
 
   return (
     <header className="sticky top-0 z-40 backdrop-blur bg-white/80 border-b border-slate-100">
@@ -67,11 +86,42 @@ export default function Navbar() {
           </NavLink>
         </div>
 
-        {/* CTA */}
-        <a href="/#pedido" className="btn-primary hidden sm:inline-flex">
-          <SparkleIcon className="h-4 w-4" />
-          Pedir ahora
-        </a>
+        {/* CTA / Auth */}
+        <div className="flex items-center gap-2">
+          {isAuthenticated ? (
+            <>
+              <div className="hidden sm:flex flex-col items-end leading-none">
+                <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                  Conectado
+                </span>
+                <span
+                  className="text-xs font-medium text-slate-700 max-w-[180px] truncate"
+                  title={displayName}
+                >
+                  {displayName}
+                </span>
+              </div>
+              <button
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="btn-ghost text-sm"
+                title="Cerrar sesión"
+              >
+                {loggingOut ? '…' : 'Salir'}
+              </button>
+            </>
+          ) : (
+            <>
+              <Link to="/login" className="btn-secondary text-sm hidden sm:inline-flex">
+                Acceder
+              </Link>
+              <a href="/#pedido" className="btn-primary text-sm">
+                <SparkleIcon className="h-4 w-4" />
+                Pedir ahora
+              </a>
+            </>
+          )}
+        </div>
       </nav>
     </header>
   )

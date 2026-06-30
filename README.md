@@ -12,8 +12,11 @@ Web profesional de **servicios de lavandería y limpieza a domicilio**. Aplicaci
 |---|---|
 | **Home (`/`)** | Hero, servicios, "cómo funciona" y formulario de pedido integrado. |
 | **Formulario dinámico** | El campo *Tipo de Servicio* (Lavandería / Limpieza) muestra campos adicionales específicos. |
-| **Admin (`/admin`)** | Tabla de todos los pedidos con filtros por tipo y toggle de estado Pendiente ⇄ Completado. |
+| **Admin (`/admin`)** | Tabla de todos los pedidos con filtros por tipo y toggle de estado Pendiente ⇄ Completado. **Protegido con Firebase Auth.** |
+| **Login (`/login`)** | Inicio de sesión email + password con `signInWithEmailAndPassword`. |
+| **ProtectedRoute** | Componente que envuelve rutas privadas; redirige a `/login` si no hay sesión. |
 | **Firebase Firestore** | Persistencia en tiempo real con estructura normalizada de pedidos. |
+| **Firebase Auth** | Email/Password. Sesión persistente (localStorage). |
 | **Diseño responsive** | Mobile-first, accesible y con paleta fresca (azul/amarillo). |
 
 ### Campos dinámicos del formulario
@@ -68,7 +71,13 @@ npm install
 1. Ve a [Firebase Console](https://console.firebase.google.com/) y crea un proyecto.
 2. **Añade una Web App** (icono `</>`) y copia los valores del SDK.
 3. **Crea Firestore Database** (modo producción o pruebas).
-4. Copia `.env.example` a `.env` y rellena tus credenciales:
+4. **Activa Authentication:**
+   - En el menú lateral → **Authentication → Sign-in method**
+   - Click en **Email/Password** → **Enable → Save**
+5. **Crea tu usuario admin:**
+   - Ve a **Authentication → Users → Add user**
+   - Introduce email + contraseña (ej: `admin@shine.com` / `tu-password-seguro`)
+6. Copia `.env.example` a `.env` y rellena tus credenciales:
 
 ```bash
 cp .env.example .env
@@ -111,21 +120,25 @@ shine-web/
 │   └── favicon.svg
 ├── src/
 │   ├── components/
-│   │   ├── Navbar.jsx       # Barra de navegación sticky
-│   │   ├── Footer.jsx       # Footer corporativo
-│   │   ├── OrderForm.jsx    # Formulario dinámico con validación
-│   │   └── AdminPanel.jsx   # Tabla + filtros + toggle de estado
+│   │   ├── Navbar.jsx            # Barra de navegación sticky (con login/logout)
+│   │   ├── Footer.jsx            # Footer corporativo
+│   │   ├── OrderForm.jsx         # Formulario dinámico con validación
+│   │   ├── AdminPanel.jsx        # Tabla + filtros + toggle de estado
+│   │   └── ProtectedRoute.jsx    # Guard de rutas privadas
 │   ├── pages/
-│   │   ├── Home.jsx         # Hero + servicios + cómo funciona + form
-│   │   └── Admin.jsx        # Página /admin
+│   │   ├── Home.jsx              # Hero + servicios + cómo funciona + form
+│   │   ├── Admin.jsx             # Página /admin (protegida)
+│   │   └── Login.jsx             # Página /login (email + password)
+│   ├── context/
+│   │   └── AuthContext.jsx       # Provider de auth con useAuth, login, logout, signup
 │   ├── firebase/
-│   │   ├── config.js        # Inicialización de Firebase (env-driven)
-│   │   └── ordersApi.js     # CRUD de la colección `orders`
-│   ├── App.jsx              # Layout + Router
-│   ├── main.jsx             # Entry point
-│   └── index.css            # Tailwind + estilos globales
-├── firestore.rules          # Reglas de seguridad recomendadas
-├── .env.example             # Plantilla de variables de entorno
+│   │   ├── config.js             # Inicialización de Firebase (db + auth)
+│   │   └── ordersApi.js          # CRUD de la colección `orders`
+│   ├── App.jsx                   # Layout + Router
+│   ├── main.jsx                  # Entry point
+│   └── index.css                 # Tailwind + estilos globales
+├── firestore.rules               # Reglas de seguridad (create público, read auth)
+├── .env.example                  # Plantilla de variables de entorno
 ├── index.html
 ├── tailwind.config.js
 ├── postcss.config.js
@@ -137,11 +150,35 @@ shine-web/
 
 ## 🧭 Rutas
 
-| Ruta | Componente | Descripción |
-|------|------------|-------------|
-| `/` | `Home` | Landing + formulario de pedido |
-| `/admin` | `Admin` | Panel de gestión de pedidos |
-| `*` | — | Página 404 |
+| Ruta | Componente | Protegida | Descripción |
+|------|------------|-----------|-------------|
+| `/` | `Home` | ❌ | Landing + formulario de pedido |
+| `/login` | `Login` | ❌ | Inicio de sesión admin |
+| `/admin` | `Admin` | ✅ | Panel de gestión de pedidos |
+| `*` | — | ❌ | Página 404 |
+
+### Flujo de autenticación
+
+```
+Usuario entra a /admin
+        │
+        ▼
+ProtectedRoute verifica useAuth()
+        │
+   ┌────┴────┐
+   │         │
+loading    user?
+   │         │
+spinner    ┌─┴──┐
+           │    │
+          no   sí
+           │    │
+           ▼    ▼
+       /login  <Admin/>
+           │
+           ▼
+   tras login → /admin
+```
 
 ---
 
