@@ -12,6 +12,8 @@
 //   VITE_FIREBASE_STORAGE_BUCKET=...
 //   VITE_FIREBASE_MESSAGING_SENDER_ID=...
 //   VITE_FIREBASE_APP_ID=...
+//   VITE_FIREBASE_FUNCTIONS_REGION=us-central1   (opcional, por defecto)
+//   VITE_USE_FUNCTIONS_EMULATOR=true             (solo en dev con emulador)
 //
 // Vite expone automáticamente al cliente cualquier var con prefijo VITE_.
 // ──────────────────────────────────────────────────────────────────────────
@@ -19,7 +21,6 @@
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
 import { getAuth } from 'firebase/auth'
-import { getFunctions } from 'firebase/functions'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -31,7 +32,7 @@ const firebaseConfig = {
 }
 
 // Inicialización singleton
-const app = initializeApp(firebaseConfig)
+export const app = initializeApp(firebaseConfig)
 
 // Firestore — base de datos de pedidos
 export const db = getFirestore(app)
@@ -45,12 +46,9 @@ export const db = getFirestore(app)
 //   Firebase Console → Authentication → Users → Add user
 export const auth = getAuth(app)
 
-// Functions — cliente para invocar Cloud Functions (setPaymentSecret,
-// createCheckoutSession). En desarrollo puedes usar un emulador local:
-//   connectFunctionsEmulator(functions, 'localhost', 5001)
-export const functions = getFunctions(app)
+// NOTA: Las Cloud Functions se inicializan en src/firebase/functionsConfig.js
+// para centralizar la lógica de detección de entorno (dev vs prod) y evitar
+// que el frontend llame a localhost en producción.
 
 // Nombre de la colección central de pedidos
 export const ORDERS_COLLECTION = 'orders'
-
-export default app

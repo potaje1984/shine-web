@@ -116,21 +116,33 @@ npm install
 firebase emulators:start --only functions,firestore
 ```
 
-Apunta tu frontend al emulador:
+Apunta tu frontend al emulador añadiendo a tu `.env`:
 
-```js
-// src/firebase/config.js
-import { connectFunctionsEmulator } from 'firebase/functions'
-if (import.meta.env.DEV) {
-  connectFunctionsEmulator(functions, 'localhost', 5001)
-}
+```env
+VITE_USE_FUNCTIONS_EMULATOR=true
 ```
+
+Esto activa `connectFunctionsEmulator(functions, 'localhost', 5001)` automáticamente desde `src/firebase/functionsConfig.js`. En producción esta variable se ignora y el frontend llama directamente a `https://us-central1-<project-id>.cloudfunctions.net`.
 
 Para simular un webhook de Stripe en local:
 
 ```bash
-stripe listen --forward-to localhost:5001/shine-web/us-central1/stripeWebhook
+stripe listen --forward-to localhost:5001/shine-web-8d20b/us-central1/stripeWebhook
 ```
+
+### URLs limpias con Firebase Hosting rewrites
+
+`firebase.json` ya incluye rewrites para que tus Cloud Functions se llamen
+con URLs cortas desde el dominio de Firebase Hosting:
+
+| URL pública | Cloud Function |
+|---|---|
+| `https://<your-app>.web.app/api/setPaymentSecret` | `setPaymentSecret` |
+| `https://<your-app>.web.app/api/createCheckoutSession` | `createCheckoutSession` |
+| `https://<your-app>.web.app/api/stripeWebhook` | `stripeWebhook` |
+
+Esto es opcional (el SDK de Firebase Functions resuelve las URLs solo),
+pero útil si necesitas llamarlas vía `fetch()` directamente.
 
 ---
 

@@ -15,14 +15,13 @@
 
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { httpsCallable } from 'firebase/functions'
-import { functions } from '../firebase/config'
 import { useAuth } from '../context/AuthContext'
 import {
   getPaymentSettings,
   savePaymentSettings,
   isSecretKeyConfigured,
 } from '../firebase/settingsApi'
+import { callFunction } from '../firebase/functionsConfig'
 import AdminNav from '../components/AdminNav'
 
 const PROVIDERS = [
@@ -123,17 +122,17 @@ export default function PaymentSettings() {
     try {
       // Callable Function: el valor viaja cifrado HTTPS al backend,
       // NUNCA se persiste en Firestore, solo en env vars de Cloud Functions.
-      const setPaymentSecret = httpsCallable(functions, 'setPaymentSecret')
-      const res = await setPaymentSecret({
+      // La URL (dev/prod) se resuelve automáticamente en functionsConfig.js
+      const res = await callFunction('setPaymentSecret', {
         provider,
         secretKey: secretKey.trim(),
       })
-      if (res.data?.ok) {
+      if (res?.ok) {
         setSecretConfigured(true)
         setSecretKey('') // limpiamos el input por seguridad
         setMsg({ type: 'success', text: 'Secret key guardada en el servidor.' })
       } else {
-        throw new Error(res.data?.error || 'Error desconocido')
+        throw new Error(res?.error || 'Error desconocido')
       }
     } catch (err) {
       console.error(err)

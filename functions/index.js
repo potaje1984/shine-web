@@ -172,7 +172,7 @@ exports.createCheckoutSession = onCall(
     }
 
     const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
-    const { orderId, amount, currency, description, customerEmail } = req.data || {}
+    const { orderId, amount, currency, description, customerEmail, origin: clientOrigin } = req.data || {}
 
     // Validaciones básicas
     if (!orderId || !amount || !currency) {
@@ -182,7 +182,29 @@ exports.createCheckoutSession = onCall(
       throw new HttpsError('invalid-argument', 'Importe mínimo: 0,50€.')
     }
 
-    const origin = req.data.origin || 'http://localhost:5173'
+    // ────────────────────────────────────────────────────────────────
+    // Detección de origen dinámica para los redirects de Stripe.
+    //
+    // Prioridad:
+    //   1. origin explícito pasado por el cliente (clientOrigin)
+    //   2. Cabecera Origin o Referer de la petición (Callable Functions
+    //      exponen req.app? req.headers... aquí usamos req.app.headers)
+    //   3. Variable de entorno STRIPE_SUCCESS_URL_BASE configurada en
+    //      Cloud Functions (recomendado para producción)
+    //   4. Fallback: localhost — SOLO para desarrollo local
+    //
+    // Esto evita que en producción los clientes sean redirigidos a
+    // localhost después de pagar.
+    // ────────────────────────────────────────────────────────────────
+    const detectedOrigin =
+      clientOrigin ||
+      (req.app && (req.app.get('origin') || req.app.get('referer'))) ||
+      (req.headers && (req.headers.origin || req.headers.referer)) ||
+      process.env.STRIPE_SUCCESS_URL_BASE ||
+      'http://localhost:5173'
+
+    // Sanitizar: quitar trailing slash
+    const origin = detectedOrigin.replace(/\/$/, '')
 
     try {
       const session = await stripe.checkout.sessions.create({
