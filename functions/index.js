@@ -419,3 +419,510 @@ exports.onOrderCreated = onDocumentCreated(
     // TODO: enviar email al admin, push notification, etc.
   },
 )
+
+// ════════════════════════════════════════════════════════════════════════
+// TARJETAS GUARDADAS (SetupIntent + PaymentIntent off-session)
+//
+// Flujo tipo Uber:
+//   Fase 1 — Cliente registra tarjeta una vez (createSetupIntent)
+//   Fase 2 — Sistema cobra cuando quiere (chargeSavedCard)
+// ════════════════════════════════════════════════════════════════════════
+
+/**
+ * Helper: obtener o crear un Stripe Customer para este uid.
+ * Persiste stripeCustomerId en Firestore users/{uid}.
+ */
+async function getOrCreateStripeCustomer(uid, email) {
+  const userRef = db.collection('users').doc(uid)
+  const userSnap = await userRef.get()
+
+  if (userSnap.exists && userSnap.data().stripeCustomerId) {
+    return userSnap.data().stripeCustomerId
+  }
+
+  // Crear Customer en Stripe
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+  const customer = await stripe.customers.create({
+    metadata: { firebaseUid: uid },
+    email: email || undefined,
+  })
+
+  // Persistir en Firestore (sin datos sensibles de tarjeta)
+  await userRef.set({
+    uid,
+    email: email || null,
+    stripeCustomerId: customer.id,
+    paymentMethods: [],
+    defaultPaymentMethodId: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  }, { merge: true })
+
+  return customer.id
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 6) createSetupIntent — FASE 1: registrar tarjeta sin cobrar
+//
+// El cliente invoca esta función desde /save-card. Devuelve un
+// `clientSecret` que Stripe Elements usa para montar el formulario
+// seguro de captura de tarjeta.
+//
+// Frontend:
+//   const { clientSecret, customerId } = await callFunction('createSetupIntent')
+//   // → usar con <Elements options={{ clientSecret }}>
+// ──────────────────────────────────────────────────────────────────────
+exports.createSetupIntent = onCall(
+  { secrets: ['STRIPE_SECRET_KEY'], cors: true },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+
+    const uid = req.auth.uid
+    const email = req.auth.token.email || null
+
+    try {
+      const customerId = await getOrCreateStripeCustomer(uid, email)
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+
+      // SetupIntent con usage: 'off_session' → habilita cobros posteriores
+      // sin que el cliente esté presente. Stripe puede requerir 3DS en este
+      // paso (métodos europeos) y eso se resuelve en el frontend.
+      const setupIntent = await stripe.setupIntents.create({
+        customer: customerId,
+        payment_method_types: ['card'],
+        usage: 'off_session',
+        metadata: { firebaseUid: uid },
+      })
+
+      return {
+        clientSecret: setupIntent.client_secret,
+        setupIntentId: setupIntent.id,
+        customerId,
+      }
+    } catch (err) {
+      console.error('createSetupIntent error:', err)
+      throw new HttpsError('internal', 'No se pudo iniciar el registro de tarjeta.')
+    }
+  },
+)
+
+// ──────────────────────────────────────────────────────────────────────
+// 7) savePaymentMethod — Persistir PaymentMethod en Firestore
+//
+// Tras confirmar el SetupIntent en el frontend, el cliente llama a esta
+// función con el paymentMethodId. Esta CF:
+//   1. Recupera el PaymentMethod de Stripe (para obtener brand, last4…)
+//   2. Lo adjunta al Customer (si no lo está ya)
+//   3. Lo persiste en Firestore users/{uid}.paymentMethods[]
+//   4. Si es la primera tarjeta, la marca como default
+//
+// ⚠️  NO guardamos números de tarjeta, CVV ni expiración completa.
+//     Solo: id, brand, last4, expMonth, expYear.
+// ──────────────────────────────────────────────────────────────────────
+exports.savePaymentMethod = onCall(
+  { secrets: ['STRIPE_SECRET_KEY'], cors: true },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+
+    const { paymentMethodId } = req.data || {}
+    if (!paymentMethodId || !paymentMethodId.startsWith('pm_')) {
+      throw new HttpsError('invalid-argument', 'paymentMethodId inválido.')
+    }
+
+    const uid = req.auth.uid
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+
+    try {
+      const userRef = db.collection('users').doc(uid)
+      const userSnap = await userRef.get()
+      if (!userSnap.exists || !userSnap.data().stripeCustomerId) {
+        throw new HttpsError('failed-precondition', 'Falta crear el Customer primero.')
+      }
+      const { stripeCustomerId } = userSnap.data()
+      const userData = userSnap.data()
+
+      // Recuperar PM desde Stripe para tener brand/last4
+      const pm = await stripe.paymentMethods.retrieve(paymentMethodId)
+
+      // Attach al Customer (idempotente: si ya está adjunto, Stripe lanza
+      // error específico que ignoramos)
+      try {
+        await stripe.paymentMethods.attach(paymentMethodId, {
+          customer: stripeCustomerId,
+        })
+      } catch (attachErr) {
+        // Código invalid_request_error con msg "already attached" es OK
+        if (!/already attached/i.test(attachErr.message)) {
+          throw attachErr
+        }
+      }
+
+      // ¿Es la primera tarjeta? Marcar como default del Customer en Stripe
+      const isFirstCard = !userData.defaultPaymentMethodId
+      if (isFirstCard) {
+        await stripe.customers.update(stripeCustomerId, {
+          invoice_settings: { default_payment_method: paymentMethodId },
+        })
+      }
+
+      // Persistir en Firestore (sin datos sensibles)
+      const pmSummary = {
+        id: pm.id,
+        brand: pm.card?.brand || 'unknown',
+        last4: pm.card?.last4 || '----',
+        expMonth: pm.card?.exp_month || null,
+        expYear: pm.card?.exp_year || null,
+        isDefault: isFirstCard,
+        addedAt: new Date().toISOString(),
+      }
+
+      const existing = userData.paymentMethods || []
+      // Evitar duplicados
+      const filtered = existing.filter((p) => p.id !== pm.id)
+      const paymentMethods = [...filtered, pmSummary]
+
+      await userRef.update({
+        paymentMethods,
+        defaultPaymentMethodId: isFirstCard ? pm.id : (userData.defaultPaymentMethodId || null),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      })
+
+      return {
+        ok: true,
+        paymentMethod: pmSummary,
+        isDefault: isFirstCard,
+      }
+    } catch (err) {
+      console.error('savePaymentMethod error:', err)
+      throw new HttpsError('internal', err.message || 'No se pudo guardar la tarjeta.')
+    }
+  },
+)
+
+// ──────────────────────────────────────────────────────────────────────
+// 8) listPaymentMethods — Devuelve las tarjetas guardadas del usuario
+// ──────────────────────────────────────────────────────────────────────
+exports.listPaymentMethods = onCall(
+  { cors: true },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+    const userRef = db.collection('users').doc(req.auth.uid)
+    const userSnap = await userRef.get()
+    if (!userSnap.exists) {
+      return { paymentMethods: [], defaultPaymentMethodId: null }
+    }
+    const data = userSnap.data()
+    return {
+      paymentMethods: data.paymentMethods || [],
+      defaultPaymentMethodId: data.defaultPaymentMethodId || null,
+    }
+  },
+)
+
+// ──────────────────────────────────────────────────────────────────────
+// 9) setDefaultPaymentMethod — Cambiar tarjeta por defecto
+// ──────────────────────────────────────────────────────────────────────
+exports.setDefaultPaymentMethod = onCall(
+  { secrets: ['STRIPE_SECRET_KEY'], cors: true },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+    const { paymentMethodId } = req.data || {}
+    const uid = req.auth.uid
+
+    const userRef = db.collection('users').doc(uid)
+    const userSnap = await userRef.get()
+    if (!userSnap.exists) {
+      throw new HttpsError('not-found', 'Usuario no encontrado.')
+    }
+    const userData = userSnap.data()
+    if (!userData.stripeCustomerId) {
+      throw new HttpsError('failed-precondition', 'Sin Customer de Stripe.')
+    }
+
+    const pm = (userData.paymentMethods || []).find((p) => p.id === paymentMethodId)
+    if (!pm) {
+      throw new HttpsError('not-found', 'Tarjeta no encontrada.')
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+    await stripe.customers.update(userData.stripeCustomerId, {
+      invoice_settings: { default_payment_method: paymentMethodId },
+    })
+
+    const paymentMethods = (userData.paymentMethods || []).map((p) => ({
+      ...p,
+      isDefault: p.id === paymentMethodId,
+    }))
+
+    await userRef.update({
+      paymentMethods,
+      defaultPaymentMethodId: paymentMethodId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    })
+
+    return { ok: true, paymentMethods, defaultPaymentMethodId: paymentMethodId }
+  },
+)
+
+// ──────────────────────────────────────────────────────────────────────
+// 10) removePaymentMethod — Eliminar tarjeta
+// ──────────────────────────────────────────────────────────────────────
+exports.removePaymentMethod = onCall(
+  { secrets: ['STRIPE_SECRET_KEY'], cors: true },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+    const { paymentMethodId } = req.data || {}
+    const uid = req.auth.uid
+
+    const userRef = db.collection('users').doc(uid)
+    const userSnap = await userRef.get()
+    if (!userSnap.exists) {
+      throw new HttpsError('not-found', 'Usuario no encontrado.')
+    }
+    const userData = userSnap.data()
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+    await stripe.paymentMethods.detach(paymentMethodId)
+
+    let paymentMethods = (userData.paymentMethods || []).filter((p) => p.id !== paymentMethodId)
+    let defaultPaymentMethodId = userData.defaultPaymentMethodId
+
+    // Si eliminamos la default, promover la primera
+    if (defaultPaymentMethodId === paymentMethodId) {
+      if (paymentMethods.length > 0) {
+        defaultPaymentMethodId = paymentMethods[0].id
+        await stripe.customers.update(userData.stripeCustomerId, {
+          invoice_settings: { default_payment_method: defaultPaymentMethodId },
+        })
+        paymentMethods = paymentMethods.map((p, i) => ({ ...p, isDefault: i === 0 }))
+      } else {
+        defaultPaymentMethodId = null
+      }
+    }
+
+    await userRef.update({
+      paymentMethods,
+      defaultPaymentMethodId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    })
+
+    return { ok: true, paymentMethods, defaultPaymentMethodId }
+  },
+)
+
+// ──────────────────────────────────────────────────────────────────────
+// 11) chargeSavedCard — FASE 2: cobrar con tarjeta guardada (off-session)
+//
+// Recibe { orderId } y cobra usando la tarjeta por defecto del cliente
+// (o la indicada en paymentMethodId). Maneja 3DS si Stripe lo requiere.
+//
+// Seguridad:
+//   • Si req.auth.token.admin === true → admin cobra por el cliente
+//   • Si no es admin → solo puede cobrar sus propios pedidos
+//
+// Estrategia off-session:
+//   PaymentIntent.create({
+//     customer, payment_method, amount, currency,
+//     confirm: true,        ← cobra inmediatamente
+//     off_session: true,    ← cliente no presente
+//   })
+//
+//   Si Stripe requiere 3DS → lanza error con código
+//   "authentication_required" y devolvemos un clientSecret para que el
+//   frontend muestre el modal de 3DS (stripe.handleCardAction).
+// ──────────────────────────────────────────────────────────────────────
+exports.chargeSavedCard = onCall(
+  { secrets: ['STRIPE_SECRET_KEY'], cors: true },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+
+    const { orderId, paymentMethodId: overridePmId } = req.data || {}
+    if (!orderId) {
+      throw new HttpsError('invalid-argument', 'Falta orderId.')
+    }
+
+    // ── 1. Cargar pedido ──────────────────────────────────────────
+    const orderRef = db.collection('orders').doc(orderId)
+    const orderSnap = await orderRef.get()
+    if (!orderSnap.exists) {
+      throw new HttpsError('not-found', 'Pedido no encontrado.')
+    }
+    const order = orderSnap.data()
+
+    // ── 2. Validar permisos ───────────────────────────────────────
+    // El admin puede cobrar cualquier pedido; un usuario solo los suyos.
+    const isAdmin = req.auth.token.admin === true
+    // En nuestro MVP los pedidos no tienen uid del cliente (se crean
+    // sin login). Asumimos que solo admin cobra con tarjeta guardada.
+    // En producción, añadir order.uid === req.auth.uid para usuarios.
+    if (!isAdmin) {
+      // Si no es admin, podría ser el cliente pagando su propio pedido:
+      // requiere que el pedido tenga uid del cliente. Por ahora, denied.
+      throw new HttpsError('permission-denied', 'Solo admin puede cobrar con tarjeta guardada.')
+    }
+
+    // ── 3. Validaciones de estado ─────────────────────────────────
+    if (order.status !== 'listo_para_pago') {
+      throw new HttpsError(
+        'failed-precondition',
+        `El pedido no está listo para pagar (estado: "${order.status}").`,
+      )
+    }
+    if (!order.finalPriceCents || order.finalPriceCents < 50) {
+      throw new HttpsError('failed-precondition', 'finalPrice no fijado.')
+    }
+
+    // ── 4. Cargar datos del cliente (Customer + PM) ───────────────
+    // El pedido debe tener un cliente asociado (por uid o email).
+    // Aquí asumimos que el pedido tiene `customerUid` (futuro: añadir
+    // al crear pedido con usuario logueado).
+    let userUid = order.customerUid
+    let userData
+    if (userUid) {
+      const userSnap = await db.collection('users').doc(userUid).get()
+      if (!userSnap.exists) {
+        throw new HttpsError('failed-precondition', 'Cliente sin cuenta de usuario.')
+      }
+      userData = userSnap.data()
+    } else {
+      // MVP fallback: buscar usuario por email del pedido
+      const email = (order.nombre || '').toLowerCase() // simplificación
+      const q = await db.collection('users').where('email', '==', email).limit(1).get()
+      if (q.empty) {
+        throw new HttpsError(
+          'failed-precondition',
+          'El cliente no tiene tarjeta registrada. Pídele que registre una en /save-card.',
+        )
+      }
+      userData = q.docs[0].data()
+      userUid = userData.uid || q.docs[0].id
+    }
+
+    if (!userData.stripeCustomerId) {
+      throw new HttpsError('failed-precondition', 'Cliente sin Stripe Customer.')
+    }
+
+    const paymentMethodId = overridePmId || userData.defaultPaymentMethodId
+    if (!paymentMethodId) {
+      throw new HttpsError('failed-precondition', 'Cliente sin tarjeta registrada.')
+    }
+
+    // ── 5. Crear PaymentIntent off-session ────────────────────────
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+    const currency = 'eur'
+
+    try {
+      const intent = await stripe.paymentIntents.create({
+        amount: order.finalPriceCents,
+        currency,
+        customer: userData.stripeCustomerId,
+        payment_method: paymentMethodId,
+        confirm: true,           // cobra inmediatamente
+        off_session: true,       // cliente no presente
+        capture_method: 'automatic',
+        metadata: {
+          orderId,
+          firebaseUid: userUid,
+          finalPrice: String(order.finalPrice),
+        },
+        description: `Shine — Pedido ${orderId.slice(0, 8)}`,
+      })
+
+      // ── 6. Actualizar pedido ───────────────────────────────────
+      await orderRef.update({
+        status: 'pagado',
+        paymentStatus: 'paid',
+        paymentIntentId: intent.id,
+        paymentMethod: 'saved_card',
+        paymentMethodId,
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+      })
+
+      return {
+        ok: true,
+        status: intent.status,
+        paymentIntentId: intent.id,
+        requiresAction: false,
+      }
+    } catch (err) {
+      // ── 7. Manejar 3DS requerido ───────────────────────────────
+      // Stripe lanza error con code === 'authentication_required'
+      // cuando el banco del cliente exige 3D Secure incluso en off_session.
+      // En ese caso devolvemos el clientSecret para que el frontend
+      // muestre el modal con stripe.handleCardAction(clientSecret).
+      if (err.code === 'authentication_required' && err.raw?.payment_intent?.client_secret) {
+        // El PaymentIntent quedó en estado requires_action
+        const intent = err.raw.payment_intent
+        await orderRef.update({
+          paymentStatus: 'requires_action',
+          paymentIntentId: intent.id,
+          paymentMethod: 'saved_card',
+          paymentMethodId,
+        })
+        return {
+          ok: false,
+          requiresAction: true,
+          clientSecret: intent.client_secret,
+          paymentIntentId: intent.id,
+          message: 'Se requiere autenticación 3D Secure del cliente.',
+        }
+      }
+
+      console.error('chargeSavedCard error:', err)
+      await orderRef.update({
+        paymentStatus: 'failed',
+        paymentError: err.message,
+      })
+      throw new HttpsError('internal', err.message || 'No se pudo cobrar la tarjeta.')
+    }
+  },
+)
+
+// ──────────────────────────────────────────────────────────────────────
+// 12) confirmCardAction — Completar 3DS tras authentication_required
+//
+// Tras chargeSavedCard devuelve requiresAction=true, el frontend llama
+// a stripe.handleCardAction(clientSecret) para mostrar el modal 3DS.
+// Cuando el cliente completa la autenticación, llama a esta CF para
+// confirmar el PaymentIntent en el servidor y marcar el pedido como pagado.
+// ──────────────────────────────────────────────────────────────────────
+exports.confirmCardAction = onCall(
+  { secrets: ['STRIPE_SECRET_KEY'], cors: true },
+  async (req) => {
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+    const { paymentIntentId, orderId } = req.data || {}
+    if (!paymentIntentId || !orderId) {
+      throw new HttpsError('invalid-argument', 'Faltan paymentIntentId u orderId.')
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+    const intent = await stripe.paymentIntents.retrieve(paymentIntentId)
+
+    if (intent.status === 'succeeded') {
+      await db.collection('orders').doc(orderId).update({
+        status: 'pagado',
+        paymentStatus: 'paid',
+        paidAt: admin.firestore.FieldValue.serverTimestamp(),
+      })
+      return { ok: true, status: 'succeeded' }
+    }
+    return {
+      ok: false,
+      status: intent.status,
+      message: `El PaymentIntent está en estado "${intent.status}".`,
+    }
+  },
+)

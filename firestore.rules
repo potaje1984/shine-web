@@ -38,6 +38,23 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // users/{uid} — perfil de cliente con Stripe Customer + tarjetas
+    //
+    // Seguridad:
+    //   • Cada usuario solo puede LEER su propio documento
+    //   • La ESCRITURA la hacen exclusivamente las Cloud Functions
+    //     (admin SDK salta las reglas) → el cliente no puede manipular
+    //     su stripeCustomerId, paymentMethods, defaultPaymentMethodId.
+    //   • El admin puede leer cualquier usuario (para ver tarjetas y cobrar)
+    // ──────────────────────────────────────────────────────────────
+    match /users/{uid} {
+      allow read: if request.auth != null
+        && (request.auth.uid == uid || request.auth.token.admin == true);
+      // Solo Cloud Functions (admin SDK) escribe. Cliente nunca.
+      allow write: if false;
+    }
+
     // Bloquear todo lo demás por defecto
     match /{document=**} {
       allow read, write: if false;

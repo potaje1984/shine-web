@@ -7,11 +7,13 @@ import Home from './pages/Home'
 import Admin from './pages/Admin'
 import Login from './pages/Login'
 import PaymentSettings from './pages/PaymentSettings'
+import SaveCard from './pages/SaveCard'
 
 /**
  * Layout raíz + rutas:
  *   '/'                          → Home
  *   '/login'                     → Login (email + password)
+ *   '/save-card'                 → Registro de tarjeta (Stripe Elements)
  *   '/admin'                     → Panel de pedidos (protegido)
  *   '/admin/payment-settings'    → Configuración de pago (protegido)
  *   '/redirect?to=...'           → Ruta interna para reconstruir URLs
@@ -45,6 +47,14 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
+          <Route
+            path="/save-card"
+            element={
+              <ProtectedRoute>
+                <SaveCard />
+              </ProtectedRoute>
+            }
+          />
           <Route path="/redirect" element={<RedirectHandler />} />
 
           {/* Rutas protegidas — requieren usuario autenticado */}

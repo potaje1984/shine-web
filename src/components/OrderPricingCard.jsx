@@ -6,7 +6,10 @@
 // Funciones:
 //  • Input para que el admin introduzca finalPrice (€)
 //  • Botón "Fijar precio" → llama a updateOrderPrice Cloud Function
-//  • Tras fijar el precio, muestra botón "Generar link de pago"
+//  • Tras fijar el precio, muestra DOS opciones de cobro:
+//    A) "Generar link de pago" → Stripe Checkout Session (link para el cliente)
+//    B) "Cobrar con tarjeta guardada" → PaymentIntent off-session (admin cobra
+//       directamente usando la tarjeta registrada del cliente, como Uber)
 //  • Tras generar el link, lo muestra con botón de copiar y abrir
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -16,15 +19,39 @@ import {
   generatePaymentLink,
   ORDER_STATUS,
 } from '../firebase/ordersApi'
+import { chargeSavedCard } from '../firebase/paymentsApi'
 
 export default function OrderPricingCard({ order, onUpdated }) {
   const [price, setPrice] = useState(
     order.finalPrice ? String(order.finalPrice) : '',
   )
-  const [busy, setBusy] = useState(null) // 'pricing' | 'link' | null
+  const [busy, setBusy] = useState(null) // 'pricing' | 'link' | 'charge' | null
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [copied, setCopied] = useState(false)
+
+  async function handleChargeSavedCard() {
+    setError('')
+    setSuccess('')
+    if (!confirm('¿Cobrar automáticamente con la tarjeta guardada del cliente?')) return
+    setBusy('charge')
+    try {
+      const res = await chargeSavedCard(order.id)
+      if (res.requiresAction) {
+        setSuccess('Se requiere autenticación 3D Secure del cliente. Pídele que confirme el pago.')
+      } else if (res.ok) {
+        setSuccess('✓ Cobro realizado con éxito.')
+        if (onUpdated) onUpdated()
+      } else {
+        throw new Error(res.message || 'No se pudo cobrar.')
+      }
+    } catch (err) {
+      console.error(err)
+      setError(err.message || 'No se pudo cobrar con la tarjeta guardada. ¿El cliente tiene tarjeta registrada?')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   async function handleSetPrice(e) {
     e.preventDefault()
@@ -154,6 +181,25 @@ export default function OrderPricingCard({ order, onUpdated }) {
             </button>
           )}
 
+          {/* Botón cobro con tarjeta guardada (estilo Uber) */}
+          {!hasPaymentLink && isListoParaPago && (
+            <button
+              onClick={handleChargeSavedCard}
+              disabled={busy !== null}
+              className="btn w-full text-sm bg-slate-900 text-white hover:bg-slate-800 focus:ring-slate-400"
+              title="Cobra automáticamente con la tarjeta que el cliente tiene registrada"
+            >
+              {busy === 'charge' ? (
+                'Cobrando…'
+              ) : (
+                <>
+                  <BoltIcon className="h-4 w-4" />
+                  Cobrar con tarjeta guardada
+                </>
+              )}
+            </button>
+          )}
+
           {/* Link generado */}
           {hasPaymentLink && (
             <div className="rounded-lg bg-white border border-slate-200 p-3 space-y-2">
@@ -226,6 +272,20 @@ function LinkIcon({ className = '' }) {
     >
       <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
       <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+    </svg>
+  )
+}
+
+function BoltIcon({ className = '' }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      stroke="none"
+      aria-hidden
+    >
+      <path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z" />
     </svg>
   )
 }
