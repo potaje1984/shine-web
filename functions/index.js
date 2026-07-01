@@ -140,26 +140,113 @@ exports.setPaymentSecret = onCall(
 )
 
 // ──────────────────────────────────────────────────────────────────────
-// 2) createCheckoutSession — Callable Function
+// 2) updateOrderPrice — Callable Function
 //
-// Invocada desde el cliente cuando un usuario confirma un pedido.
-// Crea una sesión de Stripe Checkout y devuelve la URL a la que redirigir.
+// El admin fija el precio final de un pedido tras pesar la ropa.
+// Cambia el status de 'esperando_peso' a 'listo_para_pago' atómicamente.
 //
-// Ejemplo de llamada desde el frontend:
+// Seguridad:
+//   • Verifica que el llamador está autenticado.
+//   • En producción, sustituir la comprobación de email por custom claim
+//     admin === true (ver README para configurarlo).
 //
-//   const createCheckout = httpsCallable(functions, 'createCheckoutSession')
-//   const { data } = await createCheckout({
+// Frontend:
+//   const res = await callFunction('updateOrderPrice', {
 //     orderId: 'abc123',
-//     amount: 2990,          // en céntimos (Stripe)
-//     currency: 'eur',
-//     description: 'Lavandería - 7.5kg',
-//     customerEmail: 'cliente@email.com',
+//     finalPrice: 29.90,  // en EUROS (la CF lo convierte a céntimos)
 //   })
-//   window.location.href = data.url
+// ──────────────────────────────────────────────────────────────────────
+exports.updateOrderPrice = onCall(
+  { cors: true },
+  async (req) => {
+    // ── 1. Autenticación ───────────────────────────────────────────
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+
+    // TODO producción: usar custom claims
+    // if (!req.auth.token.admin) {
+    //   throw new HttpsError('permission-denied', 'Solo administradores.')
+    // }
+    // Mientras tanto, whitelist por email:
+    const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    const callerEmail = (req.auth.token.email || '').toLowerCase()
+    if (ADMIN_EMAILS.length > 0 && !ADMIN_EMAILS.includes(callerEmail)) {
+      throw new HttpsError('permission-denied', 'Solo administradores.')
+    }
+
+    // ── 2. Validación de parámetros ────────────────────────────────
+    const { orderId, finalPrice } = req.data || {}
+    if (!orderId) {
+      throw new HttpsError('invalid-argument', 'Falta orderId.')
+    }
+    const price = Number(finalPrice)
+    if (isNaN(price) || price <= 0) {
+      throw new HttpsError('invalid-argument', 'finalPrice debe ser un número positivo.')
+    }
+    if (price > 9999) {
+      throw new HttpsError('invalid-argument', 'finalPrice no puede superar 9999€.')
+    }
+
+    // ── 3. Leer el pedido actual ───────────────────────────────────
+    const orderRef = db.collection('orders').doc(orderId)
+    const orderSnap = await orderRef.get()
+    if (!orderSnap.exists) {
+      throw new HttpsError('not-found', 'Pedido no encontrado.')
+    }
+    const order = orderSnap.data()
+
+    // Solo se puede fijar precio si está en estado esperando_peso
+    if (order.status && order.status !== 'esperando_peso') {
+      throw new HttpsError(
+        'failed-precondition',
+        `No se puede fijar precio: el pedido está en estado "${order.status}".`,
+      )
+    }
+
+    // ── 4. Actualizar atómicamente ─────────────────────────────────
+    const finalPriceCents = Math.round(price * 100) // Stripe usa céntimos
+    await orderRef.update({
+      finalPrice: price,
+      finalPriceCents,
+      status: 'listo_para_pago',
+      pricedAt: admin.firestore.FieldValue.serverTimestamp(),
+      pricedBy: callerEmail,
+    })
+
+    return {
+      ok: true,
+      message: 'Precio fijado. El cliente ya puede pagar.',
+      orderId,
+      finalPrice: price,
+      status: 'listo_para_pago',
+    }
+  },
+)
+
+// ──────────────────────────────────────────────────────────────────────
+// 3) createCheckoutSession — Callable Function
+//
+// Crea una sesión de Stripe Checkout basándose en el finalPrice guardado
+// en el documento del pedido.
+//
+// Flujo:
+//   1. Cliente/admin invoca con { orderId }
+//   2. CF lee el pedido de Firestore
+//   3. CF verifica que status === 'listo_para_pago' y finalPrice existe
+//   4. CF crea Stripe Checkout Session con el importe correcto
+//   5. CF guarda paymentLink y paymentStatus en el pedido
+//   6. CF devuelve { url, sessionId } para redirigir
 // ──────────────────────────────────────────────────────────────────────
 exports.createCheckoutSession = onCall(
   { secrets: ['STRIPE_SECRET_KEY'], cors: true },
   async (req) => {
+    // ── 1. Verificar autenticación (cliente o admin) ──────────────
+    if (!req.auth) {
+      throw new HttpsError('unauthenticated', 'Debes iniciar sesión.')
+    }
+
+    // ── 2. Cargar settings de la pasarela ─────────────────────────
     const settings = await getPublicSettings()
     if (!settings || !settings.active) {
       throw new HttpsError('failed-precondition', 'Pasarela inactiva.')
@@ -167,44 +254,50 @@ exports.createCheckoutSession = onCall(
     if (settings.provider !== 'stripe') {
       throw new HttpsError(
         'failed-precondition',
-        'Este endpoint solo soporta Stripe. Usa createMercadoPagoPreference para MP.',
+        'Este endpoint solo soporta Stripe.',
       )
     }
 
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
-    const { orderId, amount, currency, description, customerEmail, origin: clientOrigin } = req.data || {}
-
-    // Validaciones básicas
-    if (!orderId || !amount || !currency) {
-      throw new HttpsError('invalid-argument', 'Faltan parámetros.')
-    }
-    if (amount < 50) {
-      throw new HttpsError('invalid-argument', 'Importe mínimo: 0,50€.')
+    // ── 3. Cargar el pedido ───────────────────────────────────────
+    const { orderId, origin: clientOrigin } = req.data || {}
+    if (!orderId) {
+      throw new HttpsError('invalid-argument', 'Falta orderId.')
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // Detección de origen dinámica para los redirects de Stripe.
-    //
-    // Prioridad:
-    //   1. origin explícito pasado por el cliente (clientOrigin)
-    //   2. Cabecera Origin o Referer de la petición (Callable Functions
-    //      exponen req.app? req.headers... aquí usamos req.app.headers)
-    //   3. Variable de entorno STRIPE_SUCCESS_URL_BASE configurada en
-    //      Cloud Functions (recomendado para producción)
-    //   4. Fallback: localhost — SOLO para desarrollo local
-    //
-    // Esto evita que en producción los clientes sean redirigidos a
-    // localhost después de pagar.
-    // ────────────────────────────────────────────────────────────────
+    const orderRef = db.collection('orders').doc(orderId)
+    const orderSnap = await orderRef.get()
+    if (!orderSnap.exists) {
+      throw new HttpsError('not-found', 'Pedido no encontrado.')
+    }
+    const order = orderSnap.data()
+
+    // ── 4. Validar estado ─────────────────────────────────────────
+    if (order.status !== 'listo_para_pago') {
+      throw new HttpsError(
+        'failed-precondition',
+        `El pedido no está listo para pagar (estado: "${order.status}").`,
+      )
+    }
+    if (!order.finalPriceCents || order.finalPriceCents < 50) {
+      throw new HttpsError(
+        'failed-precondition',
+        'El pedido no tiene un precio final válido.',
+      )
+    }
+
+    // ── 5. Detección de origin para redirects ─────────────────────
     const detectedOrigin =
       clientOrigin ||
-      (req.app && (req.app.get('origin') || req.app.get('referer'))) ||
       (req.headers && (req.headers.origin || req.headers.referer)) ||
       process.env.STRIPE_SUCCESS_URL_BASE ||
       'http://localhost:5173'
-
-    // Sanitizar: quitar trailing slash
     const origin = detectedOrigin.replace(/\/$/, '')
+
+    // ── 6. Crear sesión de Stripe ─────────────────────────────────
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+    const currency = settings.currency || 'eur'
+    const description = `${order.tipoServicio || 'Servicio'} — Pedido ${orderId.slice(0, 8)}`
+    const customerEmail = req.auth.token.email || order.nombre || undefined
 
     try {
       const session = await stripe.checkout.sessions.create({
@@ -214,8 +307,8 @@ exports.createCheckoutSession = onCall(
           {
             price_data: {
               currency,
-              product_data: { name: description || 'Servicio Shine' },
-              unit_amount: amount,
+              product_data: { name: description },
+              unit_amount: order.finalPriceCents,
             },
             quantity: 1,
           },
@@ -224,14 +317,16 @@ exports.createCheckoutSession = onCall(
         client_reference_id: orderId,
         success_url: `${origin}/pedido-exito?session_id={CHECKOUT_SESSION_ID}`,
         cancel_url: `${origin}/pedido-cancelado`,
-        metadata: { orderId },
+        metadata: { orderId, finalPrice: String(order.finalPrice) },
       })
 
-      // Marcar el pedido como 'esperando pago'
-      await db.collection('orders').doc(orderId).update({
+      // Guardar info en el pedido
+      await orderRef.update({
         paymentStatus: 'pending',
         paymentSessionId: session.id,
+        paymentLink: session.url,
         paymentProvider: 'stripe',
+        paymentCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
       })
 
       return { url: session.url, sessionId: session.id }
@@ -243,7 +338,7 @@ exports.createCheckoutSession = onCall(
 )
 
 // ──────────────────────────────────────────────────────────────────────
-// 3) stripeWebhook — HTTP Function (sin cors, recibe de Stripe)
+// 4) stripeWebhook — HTTP Function (sin cors, recibe de Stripe)
 //
 // Configurar el webhook en el dashboard de Stripe:
 //   URL: https://us-central1-<project>.cloudfunctions.net/stripeWebhook
@@ -277,6 +372,7 @@ exports.stripeWebhook = onRequest(
           const orderId = session.metadata?.orderId || session.client_reference_id
           if (orderId) {
             await db.collection('orders').doc(orderId).update({
+              status: 'pagado',
               paymentStatus: 'paid',
               paymentIntentId: session.payment_intent,
               paidAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -290,6 +386,8 @@ exports.stripeWebhook = onRequest(
           if (orderId) {
             await db.collection('orders').doc(orderId).update({
               paymentStatus: 'expired',
+              // Si expira, volvemos a 'listo_para_pago' para poder regenerar link
+              status: 'listo_para_pago',
             })
           }
           break

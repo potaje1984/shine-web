@@ -1,26 +1,36 @@
+// src/components/AdminPanel.jsx
+// ──────────────────────────────────────────────────────────────────────────
+// Panel de administración de pedidos — flujo "Presupuesto Final".
+//
+// Estados:
+//   esperando_peso   → recién creado, admin debe pesar y fijar precio
+//   listo_para_pago  → precio fijado, pendiente de generar link de pago
+//   pagado           → cliente pagó (vía Stripe webhook)
+//   completado       → servicio entregado
+//   cancelado        → cancelado
+//
+// Filtros: Todos / Esperando peso / Listo para pagar / Pagados / Completados
+// ──────────────────────────────────────────────────────────────────────────
+
 import { useEffect, useMemo, useState } from 'react'
 import {
   fetchOrders,
-  updateOrderStatus,
+  markOrderCompleted,
+  cancelOrder,
+  ORDER_STATUS,
+  ORDER_STATUS_LABELS,
+  ORDER_STATUS_TONES,
 } from '../firebase/ordersApi'
+import OrderPricingCard from './OrderPricingCard'
 
 const FILTROS = [
   { key: 'todos', label: 'Todos', icon: '📋' },
-  { key: 'Lavandería', label: 'Lavandería', icon: '👕' },
-  { key: 'Limpieza', label: 'Limpieza', icon: '🧹' },
+  { key: ORDER_STATUS.ESPERANDO_PESO, label: 'Esperando peso', icon: '⚖️' },
+  { key: ORDER_STATUS.LISTO_PARA_PAGO, label: 'Listo para pagar', icon: '💳' },
+  { key: ORDER_STATUS.PAGADO, label: 'Pagados', icon: '✅' },
+  { key: ORDER_STATUS.COMPLETADO, label: 'Completados', icon: '🎯' },
 ]
 
-const ESTADOS = [
-  { key: 'Pendiente', label: 'Pendiente' },
-  { key: 'Completado', label: 'Completado' },
-]
-
-/**
- * Panel de administración:
- *  • Lista todos los pedidos en una tabla responsive.
- *  • Filtro por tipo de servicio (Todos / Lavandería / Limpieza).
- *  • Botón para cambiar estado entre Pendiente ⇄ Completado.
- */
 export default function AdminPanel() {
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
@@ -36,9 +46,7 @@ export default function AdminPanel() {
       setOrders(data)
     } catch (err) {
       console.error(err)
-      setError(
-        'No se pudieron cargar los pedidos. Revisa la configuración de Firebase.',
-      )
+      setError('No se pudieron cargar los pedidos.')
     } finally {
       setLoading(false)
     }
@@ -48,22 +56,36 @@ export default function AdminPanel() {
     load()
   }, [])
 
-  async function toggleEstado(order) {
-    const nuevo = order.estado === 'Pendiente' ? 'Completado' : 'Pendiente'
+  async function handleMarkCompleted(order) {
     setUpdatingId(order.id)
     try {
-      // Actualización optimista en UI
+      await markOrderCompleted(order.id)
       setOrders((prev) =>
-        prev.map((o) => (o.id === order.id ? { ...o, estado: nuevo } : o)),
+        prev.map((o) =>
+          o.id === order.id ? { ...o, status: ORDER_STATUS.COMPLETADO } : o,
+        ),
       )
-      await updateOrderStatus(order.id, nuevo)
     } catch (err) {
       console.error(err)
-      // Revertir en caso de error
+      alert('No se pudo marcar como completado.')
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  async function handleCancel(order) {
+    if (!confirm('¿Cancelar este pedido?')) return
+    setUpdatingId(order.id)
+    try {
+      await cancelOrder(order.id)
       setOrders((prev) =>
-        prev.map((o) => (o.id === order.id ? { ...o, estado: order.estado } : o)),
+        prev.map((o) =>
+          o.id === order.id ? { ...o, status: ORDER_STATUS.CANCELADO } : o,
+        ),
       )
-      alert('No se pudo actualizar el estado. Inténtalo de nuevo.')
+    } catch (err) {
+      console.error(err)
+      alert('No se pudo cancelar el pedido.')
     } finally {
       setUpdatingId(null)
     }
@@ -71,32 +93,32 @@ export default function AdminPanel() {
 
   const pedidosFiltrados = useMemo(() => {
     if (filtro === 'todos') return orders
-    return orders.filter((o) => o.tipoServicio === filtro)
+    return orders.filter((o) => o.status === filtro)
   }, [orders, filtro])
 
   const stats = useMemo(
     () => ({
       total: orders.length,
-      pendientes: orders.filter((o) => o.estado === 'Pendiente').length,
-      completados: orders.filter((o) => o.estado === 'Completado').length,
-      lavanderia: orders.filter((o) => o.tipoServicio === 'Lavandería').length,
-      limpieza: orders.filter((o) => o.tipoServicio === 'Limpieza').length,
+      esperando: orders.filter((o) => o.status === ORDER_STATUS.ESPERANDO_PESO).length,
+      listoPago: orders.filter((o) => o.status === ORDER_STATUS.LISTO_PARA_PAGO).length,
+      pagado: orders.filter((o) => o.status === ORDER_STATUS.PAGADO).length,
+      completado: orders.filter((o) => o.status === ORDER_STATUS.COMPLETADO).length,
     }),
     [orders],
   )
 
   return (
     <div className="space-y-6">
-      {/* ---------- KPIs ---------- */}
+      {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard label="Total" value={stats.total} tone="slate" />
-        <StatCard label="Pendientes" value={stats.pendientes} tone="amber" />
-        <StatCard label="Completados" value={stats.completados} tone="emerald" />
-        <StatCard label="Lavandería" value={stats.lavanderia} tone="brand" />
-        <StatCard label="Limpieza" value={stats.limpieza} tone="accent" />
+        <StatCard label="Esperando peso" value={stats.esperando} tone="amber" />
+        <StatCard label="Listo para pagar" value={stats.listoPago} tone="brand" />
+        <StatCard label="Pagados" value={stats.pagado} tone="emerald" />
+        <StatCard label="Completados" value={stats.completado} tone="slate" />
       </div>
 
-      {/* ---------- Toolbar ---------- */}
+      {/* Toolbar */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex flex-wrap gap-2">
           {FILTROS.map((f) => {
@@ -123,118 +145,38 @@ export default function AdminPanel() {
         </button>
       </div>
 
-      {/* ---------- Tabla ---------- */}
-      <div className="card overflow-hidden">
+      {/* Lista de pedidos */}
+      <div className="space-y-3">
         {loading ? (
-          <div className="p-12 text-center text-slate-500">
-            <Spinner size={32} />
+          <div className="card p-12 text-center text-slate-500">
+            <Spinner />
             <p className="mt-3 text-sm">Cargando pedidos…</p>
           </div>
         ) : error ? (
-          <div className="p-6 text-sm text-red-700 bg-red-50 border-b border-red-100">
+          <div className="card p-6 text-sm text-red-700 bg-red-50 border-b border-red-100">
             {error}
           </div>
         ) : pedidosFiltrados.length === 0 ? (
-          <div className="p-12 text-center">
+          <div className="card p-12 text-center">
             <p className="text-4xl mb-3">📭</p>
             <p className="text-slate-600 font-medium">No hay pedidos.</p>
             <p className="text-sm text-slate-400">
-              Cuando recibas tu primer pedido aparecerá aquí.
+              {filtro === 'todos'
+                ? 'Cuando recibas tu primer pedido aparecerá aquí.'
+                : `No hay pedidos en estado "${ORDER_STATUS_LABELS[filtro] || filtro}".`}
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-left text-xs uppercase tracking-wider text-slate-500">
-                <tr>
-                  <Th>Cliente</Th>
-                  <Th>Contacto</Th>
-                  <Th>Servicio</Th>
-                  <Th>Detalles</Th>
-                  <Th>Fecha</Th>
-                  <Th>Estado</Th>
-                  <Th className="text-right">Acción</Th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {pedidosFiltrados.map((order) => (
-                  <tr key={order.id} className="hover:bg-slate-50/50">
-                    {/* Cliente */}
-                    <Td>
-                      <div className="font-medium text-slate-800">
-                        {order.nombre || '—'}
-                      </div>
-                      <div className="text-xs text-slate-500 truncate max-w-[180px]">
-                        {order.direccion}
-                      </div>
-                    </Td>
-                    {/* Contacto */}
-                    <Td>
-                      <a
-                        href={`tel:${order.telefono}`}
-                        className="text-brand-700 hover:underline"
-                      >
-                        {order.telefono || '—'}
-                      </a>
-                    </Td>
-                    {/* Servicio */}
-                    <Td>
-                      <span
-                        className={`badge ${
-                          order.tipoServicio === 'Lavandería'
-                            ? 'bg-brand-100 text-brand-800'
-                            : 'bg-accent-100 text-accent-800'
-                        }`}
-                      >
-                        {order.tipoServicio}
-                      </span>
-                    </Td>
-                    {/* Detalles */}
-                    <Td>
-                      <DetallesCell order={order} />
-                    </Td>
-                    {/* Fecha */}
-                    <Td>
-                      <FechaCell iso={order.fecha} />
-                    </Td>
-                    {/* Estado */}
-                    <Td>
-                      <span
-                        className={
-                          order.estado === 'Pendiente'
-                            ? 'badge-pending'
-                            : 'badge-completed'
-                        }
-                      >
-                        <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-                        {order.estado}
-                      </span>
-                    </Td>
-                    {/* Acción */}
-                    <Td className="text-right">
-                      <button
-                        onClick={() => toggleEstado(order)}
-                        disabled={updatingId === order.id}
-                        className={`btn text-xs px-3 py-1.5 ${
-                          order.estado === 'Pendiente'
-                            ? 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-300'
-                            : 'bg-slate-200 text-slate-700 hover:bg-slate-300 focus:ring-slate-300'
-                        }`}
-                      >
-                        {updatingId === order.id ? (
-                          <Spinner size={14} />
-                        ) : order.estado === 'Pendiente' ? (
-                          '✓ Completar'
-                        ) : (
-                          '↺ Reabrir'
-                        )}
-                      </button>
-                    </Td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          pedidosFiltrados.map((order) => (
+            <OrderRow
+              key={order.id}
+              order={order}
+              updatingId={updatingId}
+              onMarkCompleted={handleMarkCompleted}
+              onCancel={handleCancel}
+              onUpdated={load}
+            />
+          ))
         )}
       </div>
     </div>
@@ -242,42 +184,136 @@ export default function AdminPanel() {
 }
 
 // ──────────────────────────────────────────────────────────────────────
-// Subcomponentes
+// Fila de pedido (tarjeta)
 // ──────────────────────────────────────────────────────────────────────
 
-function Th({ children, className = '' }) {
+function OrderRow({ order, updatingId, onMarkCompleted, onCancel, onUpdated }) {
+  const tone = ORDER_STATUS_TONES[order.status] || 'slate'
+  const showPricingCard =
+    order.status === ORDER_STATUS.ESPERANDO_PESO ||
+    order.status === ORDER_STATUS.LISTO_PARA_PAGO ||
+    Boolean(order.paymentLink)
+
   return (
-    <th className={`px-4 py-3 font-semibold ${className}`}>{children}</th>
+    <article className="card p-5">
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* ─── Columna 1: datos del cliente ─── */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-semibold text-slate-900">
+              {order.nombre || 'Sin nombre'}
+            </h3>
+            <StatusBadge tone={tone}>
+              {ORDER_STATUS_LABELS[order.status] || order.status}
+            </StatusBadge>
+          </div>
+          <div className="space-y-1 text-sm text-slate-600">
+            <div className="flex items-start gap-2">
+              <span className="text-slate-400 mt-0.5">📞</span>
+              <a href={`tel:${order.telefono}`} className="hover:text-brand-600">
+                {order.telefono || '—'}
+              </a>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-slate-400 mt-0.5">📍</span>
+              <span>{order.direccion || '—'}</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-slate-400 mt-0.5">🕐</span>
+              <FechaCell iso={order.fecha} />
+            </div>
+          </div>
+        </div>
+
+        {/* ─── Columna 2: detalles del servicio ─── */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <span
+              className={`badge ${
+                order.tipoServicio === 'Lavandería'
+                  ? 'bg-brand-100 text-brand-800'
+                  : 'bg-accent-100 text-accent-800'
+              }`}
+            >
+              {order.tipoServicio}
+            </span>
+            {order.finalPrice != null && (
+              <span className="badge bg-emerald-100 text-emerald-800">
+                {order.finalPrice.toFixed(2)} €
+              </span>
+            )}
+          </div>
+          <DetallesCell order={order} />
+        </div>
+
+        {/* ─── Columna 3: acciones ─── */}
+        <div className="space-y-2">
+          {/* Tarjeta de pricing (solo si aplica) */}
+          {showPricingCard && (
+            <OrderPricingCard order={order} onUpdated={onUpdated} />
+          )}
+
+          {/* Acciones rápidas según estado */}
+          {order.status === ORDER_STATUS.PAGADO && (
+            <button
+              onClick={() => onMarkCompleted(order)}
+              disabled={updatingId === order.id}
+              className="btn w-full text-xs bg-slate-900 text-white hover:bg-slate-800"
+            >
+              {updatingId === order.id ? 'Marcando…' : '✓ Marcar como entregado'}
+            </button>
+          )}
+
+          {(order.status === ORDER_STATUS.ESPERANDO_PESO ||
+            order.status === ORDER_STATUS.LISTO_PARA_PAGO) && (
+            <button
+              onClick={() => onCancel(order)}
+              disabled={updatingId === order.id}
+              className="btn-ghost w-full text-xs text-red-600 hover:bg-red-50"
+            >
+              ✕ Cancelar pedido
+            </button>
+          )}
+
+          {/* Estado del pago */}
+          {order.paymentStatus && (
+            <div className="text-xs text-slate-500 text-right">
+              Pago: <span className="font-medium">{order.paymentStatus}</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </article>
   )
 }
 
-function Td({ children, className = '' }) {
-  return <td className={`px-4 py-3 align-top ${className}`}>{children}</td>
-}
+// ──────────────────────────────────────────────────────────────────────
+// Subcomponentes
+// ──────────────────────────────────────────────────────────────────────
 
 function DetallesCell({ order }) {
   const d = order.detalles || {}
   if (order.tipoServicio === 'Lavandería') {
     return (
-      <div className="text-xs space-y-0.5">
+      <div className="text-xs space-y-0.5 text-slate-600">
         <div>
           <span className="text-slate-400">Prenda:</span>{' '}
           <span className="font-medium">{d.tipoPrenda || '—'}</span>
         </div>
         <div>
           <span className="text-slate-400">Peso:</span>{' '}
-          <span className="font-medium">{d.pesoKg ? `${d.pesoKg} kg` : '—'}</span>
+          <span className="font-medium">
+            {d.pesoKg ? `${d.pesoKg} kg` : '—'}
+          </span>
         </div>
         {d.notas && (
-          <div className="text-slate-500 italic max-w-[200px] truncate">
-            “{d.notas}”
-          </div>
+          <div className="text-slate-500 italic">“{d.notas}”</div>
         )}
       </div>
     )
   }
   return (
-    <div className="text-xs space-y-0.5">
+    <div className="text-xs space-y-0.5 text-slate-600">
       <div>
         <span className="text-slate-400">Habitaciones:</span>{' '}
         <span className="font-medium">{d.numHabitaciones || '—'}</span>
@@ -286,39 +322,48 @@ function DetallesCell({ order }) {
         <span className="text-slate-400">Tipo:</span>{' '}
         <span className="font-medium">{d.tipoLimpieza || '—'}</span>
       </div>
-      {d.notas && (
-        <div className="text-slate-500 italic max-w-[200px] truncate">
-          “{d.notas}”
-        </div>
-      )}
+      {d.notas && <div className="text-slate-500 italic">“{d.notas}”</div>}
     </div>
   )
 }
 
 function FechaCell({ iso }) {
-  if (!iso) return <span className="text-slate-400">—</span>
+  if (!iso) return <span>—</span>
   try {
     const date = new Date(iso)
     return (
-      <div className="text-xs">
-        <div className="font-medium text-slate-700">
-          {date.toLocaleDateString('es-ES', {
-            day: '2-digit',
-            month: 'short',
-            year: 'numeric',
-          })}
-        </div>
-        <div className="text-slate-400">
-          {date.toLocaleTimeString('es-ES', {
-            hour: '2-digit',
-            minute: '2-digit',
-          })}
-        </div>
-      </div>
+      <span>
+        {date.toLocaleDateString('es-ES', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        })}{' '}
+        ·{' '}
+        {date.toLocaleTimeString('es-ES', {
+          hour: '2-digit',
+          minute: '2-digit',
+        })}
+      </span>
     )
   } catch {
-    return <span className="text-slate-400">—</span>
+    return <span>—</span>
   }
+}
+
+function StatusBadge({ tone, children }) {
+  const tones = {
+    amber: 'bg-amber-100 text-amber-800',
+    brand: 'bg-brand-100 text-brand-800',
+    emerald: 'bg-emerald-100 text-emerald-800',
+    slate: 'bg-slate-100 text-slate-700',
+    red: 'bg-red-100 text-red-800',
+  }
+  return (
+    <span className={`badge ${tones[tone] || tones.slate}`}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
+      {children}
+    </span>
+  )
 }
 
 function StatCard({ label, value, tone = 'slate' }) {
@@ -327,7 +372,6 @@ function StatCard({ label, value, tone = 'slate' }) {
     amber: 'bg-amber-50 text-amber-700 border-amber-200',
     emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
     brand: 'bg-brand-50 text-brand-700 border-brand-200',
-    accent: 'bg-accent-50 text-accent-700 border-accent-200',
   }
   return (
     <div className={`rounded-xl border p-3 ${tones[tone]}`}>
@@ -362,7 +406,6 @@ function Spinner({ size = 24 }) {
       style={{ width: size, height: size }}
       viewBox="0 0 24 24"
       fill="none"
-      aria-label="cargando"
     >
       <circle
         cx="12"

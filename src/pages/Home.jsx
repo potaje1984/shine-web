@@ -145,18 +145,18 @@ export default function Home() {
             {[
               {
                 n: 1,
-                title: 'Rellena el pedido',
-                text: 'Indica tu dirección y el tipo de servicio. Te llamamos para confirmar la franja horaria.',
+                title: 'Solicita recogida',
+                text: 'Rellena el formulario con tu dirección y tipo de servicio. Recogemos en la franja que elijas.',
               },
               {
                 n: 2,
-                title: 'Recogemos y tratamos',
-                text: 'Nuestro equipo pasa a recoger y aplica el tratamiento adecuado a cada prenda o estancia.',
+                title: 'Pesamos y presupuestamos',
+                text: 'Pesamos tu ropa y te enviamos el presupuesto final con el link de pago seguro.',
               },
               {
                 n: 3,
-                title: 'Entregamos impecable',
-                text: 'En 24–48 h lo tienes de vuelta, doblado, planchado y listo para disfrutar.',
+                title: 'Paga y disfruta',
+                text: 'Paga online con tarjeta. En 24–48 h lo tienes de vuelta, doblado y listo para usar.',
               },
             ].map((step) => (
               <div

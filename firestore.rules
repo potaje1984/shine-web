@@ -2,18 +2,38 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Pedidos:
-    //   • create  → público (cualquiera puede pedir desde la web)
-    //   • read/update/delete → solo usuarios autenticados (panel /admin)
+    // ──────────────────────────────────────────────────────────────
+    // Pedidos — flujo "Presupuesto Final"
+    //
+    // Estados:
+    //   esperando_peso  → creado por cliente, esperando que admin pese
+    //   listo_para_pago → admin fijó finalPrice, listo para cobrar
+    //   pagado          → Stripe confirmó el pago (vía webhook)
+    //   completado      → servicio entregado
+    //   cancelado       → cancelado
+    //
+    // REGLAS:
+    //   • CREATE (cliente): solo puede enviar datos del pedido, NO status
+    //     ni finalPrice. El status lo fuerza el backend a 'esperando_peso'.
+    //   • UPDATE/DELETE (admin): solo usuarios autenticados.
+    //   • El cliente NO puede modificar status ni finalPrice nunca.
+    // ──────────────────────────────────────────────────────────────
     match /orders/{orderId} {
-      allow create: if true;
-      allow read, update, delete: if request.auth != null;
+      // CREATE — cliente rellenando el formulario
+      allow create: if true
+        // Bloquear que el cliente intente fijar status o finalPrice
+        && !(request.resource.data.status != null)
+        && !(request.resource.data.finalPrice != null)
+        && !(request.resource.data.paymentStatus != null)
+        && !(request.resource.data.paymentLink != null);
+
+      // UPDATE/DELETE — solo admin autenticado
+      // El cliente NO puede actualizar su propio pedido
+      allow update, delete: if request.auth != null;
+      allow read: if request.auth != null;
     }
 
-    // Configuración de pasarela de pago:
-    //   • Solo el admin puede leer/escribir la publishable key.
-    //   • La SECRET key NUNCA se guarda aquí: va en Cloud Functions env vars.
-    //   • En el frontend solo se persisten campos públicos.
+    // Configuración de pasarela de pago — solo admin
     match /settings/{docId} {
       allow read, write: if request.auth != null;
     }

@@ -298,9 +298,14 @@ export default function OrderForm() {
 
       {/* ---------- Feedback ---------- */}
       {success && (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 animate-slide-up">
-          <strong>¡Pedido registrado!</strong> Nuestro equipo se pondrá en
-          contacto contigo en breve para confirmar la hora de recogida.
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 animate-slide-up space-y-1">
+          <p>
+            <strong>¡Pedido registrado!</strong> Tu pedido ya está en cola.
+          </p>
+          <p className="text-emerald-700">
+            Pesaremos tu ropa y te enviaremos el presupuesto final con el link
+            de pago en breve. Gracias por confiar en Shine. ✨
+          </p>
         </div>
       )}
       {errorMsg && (
