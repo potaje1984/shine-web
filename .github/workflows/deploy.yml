@@ -1,5 +1,15 @@
-# Build y deploy automático a GitHub Pages cuando se hace push a main
-# Genera /dist con base='/shine-web/' y lo publica en gh-pages branch
+# Build y deploy automático a GitHub Pages cuando se hace push a main.
+# Requiere configurar los secrets de Firebase en:
+#   Settings → Secrets and variables → Actions → New repository secret
+#
+# Secrets necesarios (valores de tu .env local):
+#   VITE_FIREBASE_API_KEY
+#   VITE_FIREBASE_AUTH_DOMAIN
+#   VITE_FIREBASE_PROJECT_ID
+#   VITE_FIREBASE_STORAGE_BUCKET
+#   VITE_FIREBASE_MESSAGING_SENDER_ID
+#   VITE_FIREBASE_APP_ID
+#   VITE_FIREBASE_FUNCTIONS_REGION  (opcional, default us-central1)
 
 name: Deploy to GitHub Pages
 
@@ -34,13 +44,59 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Configure GitHub Pages base path
-        # En CI, GITHUB_ACTIONS=true → vite.config.js usa base='/shine-web/'
+      # ──────────────────────────────────────────────────────────────
+      # Configurar variables de entorno para el build.
+      #
+      # Vite "bakea" (incrusta) las variables VITE_* en el bundle
+      # en tiempo de build. Por eso hay que pasarlas aquí; si no,
+      # el bundle tendría `undefined` y la app se vería en blanco.
+      # ──────────────────────────────────────────────────────────────
+      - name: Configure environment
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_FUNCTIONS_REGION: ${{ secrets.VITE_FIREBASE_FUNCTIONS_REGION }}
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
         run: |
-          echo "VITE_BASE_PATH=/${{ github.event.repository.name }}/" >> $GITHUB_ENV
+          echo "::group::Verificación de secrets"
+          MISSING=()
+          [ -z "$VITE_FIREBASE_API_KEY" ] && MISSING+=("VITE_FIREBASE_API_KEY")
+          [ -z "$VITE_FIREBASE_AUTH_DOMAIN" ] && MISSING+=("VITE_FIREBASE_AUTH_DOMAIN")
+          [ -z "$VITE_FIREBASE_PROJECT_ID" ] && MISSING+=("VITE_FIREBASE_PROJECT_ID")
+          [ -z "$VITE_FIREBASE_STORAGE_BUCKET" ] && MISSING+=("VITE_FIREBASE_STORAGE_BUCKET")
+          [ -z "$VITE_FIREBASE_MESSAGING_SENDER_ID" ] && MISSING+=("VITE_FIREBASE_MESSAGING_SENDER_ID")
+          [ -z "$VITE_FIREBASE_APP_ID" ] && MISSING+=("VITE_FIREBASE_APP_ID")
+          if [ ${#MISSING[@]} -gt 0 ]; then
+            echo "::error::Faltan secrets: ${MISSING[*]}"
+            echo "::error::Configúralos en: Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          echo "✓ Todos los secrets de Firebase están presentes"
+          echo "::endgroup::"
 
       - name: Build
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET: ${{ secrets.VITE_FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_FUNCTIONS_REGION: ${{ secrets.VITE_FIREBASE_FUNCTIONS_REGION }}
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
         run: npm run build
+
+      - name: Verify build output
+        run: |
+          if [ ! -d "dist" ] || [ -z "$(ls -A dist 2>/dev/null)" ]; then
+            echo "::error::Build no generó archivos en dist/"
+            exit 1
+          fi
+          echo "✓ dist/ contiene $(ls dist | wc -l) elementos"
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
