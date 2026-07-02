@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "setup": "node scripts/setup-env.js"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^6.6.0",
