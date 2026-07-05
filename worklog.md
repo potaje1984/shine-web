@@ -1,32 +1,21 @@
-# Shine Web App — Worklog
-
 ---
 Task ID: 1
 Agent: main
-Task: Add Home Cleaning service with didactic explanations and customer quote acceptance
+Task: Fix broken web (PWA cache) + add phone and address to registration form
 
 Work Log:
-- Fixed critical syntax error in types.ts (Spanish comment breaking ServiceType union)
-- Rewrote cleaning-how.tsx: 6-step detailed timeline with color-coded stages, visual SVG lifecycle flow diagram with legend
-- Rewrote payment-explanation.tsx: Added "Why save card?" section, 3-phase step cards with detail text, SVG flow diagrams for both laundry and cleaning payments (desktop + mobile), Stripe security badge
-- Updated laundry-nav.tsx: Added "Cleaning" and "Payments" nav links with Home icon
-- Added acceptCleaningQuote() and rejectCleaningQuote() to use-orders.ts hook
-  - Auto-charges card when customer accepts cleaning quote
-  - Creates notification on acceptance
-- Updated dashboard/page.tsx: Added quote acceptance UI (Accept/Reject buttons) for orders in "quoted" status
-- Updated orders-table.tsx: Same quote acceptance UI with error handling
-- Added comprehensive i18n keys in both en.ts and es.ts:
-  - cleaning.customer.* (quote acceptance UI strings)
-  - landing.howCleaningWorks.* (6 steps with detail text, security section)
-  - landing.paymentExplanation.* (whySaveTitle, whySave1-3, phaseLabel, detail texts, securityBadge)
-  - landing.services.houseCleaning.* (service card data)
-  - landing.nav.cleaning/payments
-  - diagram.* (25+ labels for SVG diagrams)
-  - status.pendingQuote/quoted/accepted/inProgress/completed
+- Audited all files from the problematic commit (7d60d10) and subsequent fixes
+- Found root cause: PWA Service Worker was serving stale cached broken JS files
+- Rewrote use-pwa-register.ts to forcefully unregister ALL existing service workers before re-registering (nuclear cache bust)
+- Added phone number and address fields (street, city, zip) as required fields in the registration form
+- Updated signUp() in use-auth.ts to accept phone and address parameters and store them in Firestore
+- Updated RegisterData type in types.ts with phone and address fields
+- Added translation keys in both es.ts and en.ts for new form labels, placeholders, and validation errors
+- Build passes cleanly with no errors
+- Pushed to GitHub (commit daa223a)
 
 Stage Summary:
-- Build passes with 0 errors
-- Cleaning service now has complete customer-facing flow with quote acceptance
-- Landing page has didactic visual diagrams for both services
-- Payment explanation includes SVG flow diagrams showing each stage
-- Customer can now accept/reject cleaning quotes from dashboard and orders page
+- The web should now load correctly because the PWA hook unregisters stale cached workers before registering the new one
+- Registration form now requires phone number and full address (street, city, zip code)
+- All data is saved to the user's Firestore document on signup
+- Files changed: use-pwa-register.ts, use-auth.ts, types.ts, register-form.tsx, es.ts, en.ts
