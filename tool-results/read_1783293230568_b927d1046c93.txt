@@ -1,0 +1,875 @@
+     1→"use client";
+     2→
+     3→/**
+     4→ * Admin Orders Page — Full order management.
+     5→ * Features:
+     6→ * - Horizontal scrollable status tabs (like Instagram stories)
+     7→ * - Order cards with action buttons
+     8→ * - Order detail bottom sheet on tap
+     9→ */
+    10→
+    11→import { useState, useEffect } from "react";
+    12→import { ShoppingBag, Loader2, ChevronUp, MapPin, FileText, Calendar, Clock, CreditCard, Banknote, Check, Scale, Navigation, Home, DollarSign } from "lucide-react";
+    13→import { useOrders } from "@/hooks/use-orders";
+    14→import { useCollection, orderBy } from "@/hooks/use-firestore";
+    15→import { initFirebase, getFirestoreInstance } from "@/lib/firebase";
+    16→import { doc, updateDoc } from "firebase/firestore";
+    17→import {
+    18→  ORDER_STATUS_CONFIG,
+    19→  SERVICE_TYPE_CONFIG,
+    20→  formatTimeSlot,
+    21→  isCleaningService,
+    22→} from "@/lib/constants";
+    23→import { OrderStatusBadge } from "@/components/dashboard/order-status-badge";
+    24→import type { OrderDoc, OrderStatus } from "@/lib/types";
+    25→import { Button } from "@/components/ui/button";
+    26→import { Input } from "@/components/ui/input";
+    27→import { Skeleton } from "@/components/ui/skeleton";
+    28→import { cn } from "@/lib/utils";
+    29→import { useTranslation } from "@/lib/i18n";
+    30→import {
+    31→  Sheet,
+    32→  SheetContent,
+    33→  SheetHeader,
+    34→  SheetTitle,
+    35→} from "@/components/ui/sheet";
+    36→
+    37→// All statuses for tabs
+    38→const ALL_STATUSES: OrderStatus[] = [
+    39→  "pending",
+    40→  "pending_quote",
+    41→  "quoted",
+    42→  "accepted",
+    43→  "in_progress",
+    44→  "completed",
+    45→  "picked_up",
+    46→  "in_wash",
+    47→  "ready",
+    48→  "delivered",
+    49→  "cancelled",
+    50→];
+    51→
+    52→export default function AdminOrdersPage() {
+    53→  const { t } = useTranslation();
+    54→  const [mounted, setMounted] = useState(false);
+    55→  const [activeTab, setActiveTab] = useState<string>("all");
+    56→  const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
+    57→
+    58→  const { data: allOrders, loading: ordersLoading } = useCollection<OrderDoc>(
+    59→    "orders",
+    60→    orderBy("createdAt", "desc")
+    61→  );
+    62→
+    63→  // Siempre usar la versión más reciente del pedido de Firestore
+    64→  const selectedOrder = selectedOrderId
+    65→    ? allOrders.find((o) => o.id === selectedOrderId) ?? null
+    66→    : null;
+    67→
+    68→  // Filter orders by tab
+    69→  const filteredOrders =
+    70→    activeTab === "all"
+    71→      ? allOrders
+    72→      : allOrders.filter((o) => o.status === activeTab);
+    73→
+    74→  // Count by status
+    75→  const statusCounts = ALL_STATUSES.reduce<Record<string, number>>(
+    76→    (acc, s) => {
+    77→      acc[s] = allOrders.filter((o) => o.status === s).length;
+    78→      return acc;
+    79→    },
+    80→    {}
+    81→  );
+    82→
+    83→  useEffect(() => {
+    84→    setMounted(true);
+    85→  }, []);
+    86→
+    87→  if (!mounted) return null;
+    88→
+    89→  return (
+    90→    <div className="space-y-5">
+    91→      {/* Header */}
+    92→      <div>
+    93→        <h1 className="text-xl font-bold">{t("admin.orders.title")}</h1>
+    94→        <p className="mt-0.5 text-sm text-muted-foreground">
+    95→          {filteredOrders.length} {filteredOrders.length !== 1 ? t("admin.orders.orders") : t("admin.orders.order")}
+    96→        </p>
+    97→      </div>
+    98→
+    99→      {/* Status Tabs — horizontal scroll */}
+   100→      <div className="scrollbar-none -mx-4 flex gap-2 overflow-x-auto px-4 pb-1">
+   101→        <TabButton
+   102→          active={activeTab === "all"}
+   103→          onClick={() => setActiveTab("all")}
+   104→          count={allOrders.length}
+   105→        >
+   106→          {t("admin.orders.all")}
+   107→        </TabButton>
+   108→        {ALL_STATUSES.map((status) => (
+   109→          <TabButton
+   110→            key={status}
+   111→            active={activeTab === status}
+   112→            onClick={() => setActiveTab(status)}
+   113→            count={statusCounts[status] || 0}
+   114→            colorClass={ORDER_STATUS_CONFIG[status].color}
+   115→          >
+   116→            {t(`status.${statusTabKey(status)}`)}
+   117→          </TabButton>
+   118→        ))}
+   119→      </div>
+   120→
+   121→      {/* Order List */}
+   122→      {ordersLoading ? (
+   123→        <div className="space-y-3">
+   124→          {Array.from({ length: 5 }).map((_, i) => (
+   125→            <Skeleton key={i} className="h-28 rounded-xl bg-white/[0.03]" />
+   126→          ))}
+   127→        </div>
+   128→      ) : filteredOrders.length === 0 ? (
+   129→        <div className="flex flex-col items-center justify-center rounded-xl border border-white/[0.06] bg-white/[0.02] py-12 text-center">
+   130→          <ShoppingBag className="mb-3 h-10 w-10 text-muted-foreground/30" />
+   131→          <p className="text-sm text-muted-foreground">{t("admin.orders.noOrders")}</p>
+   132→        </div>
+   133→      ) : (
+   134→        <div className="space-y-3">
+   135→          {filteredOrders.map((order) => (
+   136→            <AdminOrderCard
+   137→              key={order.id}
+   138→              order={order}
+   139→              onTap={() => setSelectedOrderId(order.id)}
+   140→            />
+   141→          ))}
+   142→        </div>
+   143→      )}
+   144→
+   145→      {/* Order Detail Sheet */}
+   146→      <Sheet open={!!selectedOrder} onOpenChange={(open) => !open && setSelectedOrderId(null)}>
+   147→        <SheetContent side="bottom" className="max-h-[85vh] rounded-t-2xl border-white/[0.06] bg-background">
+   148→          <SheetHeader className="px-5 pt-5 pb-0">
+   149→            <SheetTitle className="text-left">
+   150→              {selectedOrder
+   151→                ? `${SERVICE_TYPE_CONFIG[selectedOrder.serviceType]?.label || selectedOrder.serviceType}`
+   152→                : ""}
+   153→            </SheetTitle>
+   154→          </SheetHeader>
+   155→          {selectedOrder && (
+   156→            <OrderDetailSheet order={selectedOrder} onClose={() => setSelectedOrderId(null)} />
+   157→          )}
+   158→        </SheetContent>
+   159→      </Sheet>
+   160→    </div>
+   161→  );
+   162→}
+   163→
+   164→/* ──────────── Sub-components ──────────── */
+   165→
+   166→function TabButton({
+   167→  children,
+   168→  active,
+   169→  onClick,
+   170→  count,
+   171→  colorClass,
+   172→}: {
+   173→  children: React.ReactNode;
+   174→  active: boolean;
+   175→  onClick: () => void;
+   176→  count: number;
+   177→  colorClass?: string;
+   178→}) {
+   179→  return (
+   180→    <button
+   181→      onClick={onClick}
+   182→      className={cn(
+   183→        "flex shrink-0 items-center gap-1.5 rounded-full px-3.5 py-2 text-xs font-medium transition-all",
+   184→        active
+   185→          ? "bg-primary text-primary-foreground"
+   186→          : "bg-white/[0.04] text-muted-foreground hover:bg-white/[0.08]"
+   187→      )}
+   188→    >
+   189→      {children}
+   190→      <span
+   191→        className={cn(
+   192→          "rounded-full px-1.5 py-0.5 text-[10px] font-bold",
+   193→          active
+   194→            ? "bg-primary-foreground/20 text-primary-foreground"
+   195→            : colorClass
+   196→              ? cn("bg-white/[0.06]", colorClass)
+   197→              : "bg-white/[0.06] text-muted-foreground"
+   198→        )}
+   199→      >
+   200→        {count}
+   201→      </span>
+   202→    </button>
+   203→  );
+   204→}
+   205→
+   206→function AdminOrderCard({
+   207→  order,
+   208→  onTap,
+   209→}: {
+   210→  order: OrderDoc;
+   211→  onTap: () => void;
+   212→}) {
+   213→  const { t } = useTranslation();
+   214→  const { updateOrderStatus, getNextStatuses } = useOrders();
+   215→  const [updating, setUpdating] = useState<string | null>(null);
+   216→
+   217→  const serviceCfg = SERVICE_TYPE_CONFIG[order.serviceType];
+   218→  const nextStatuses = getNextStatuses(order.status);
+   219→  const isTerminal = order.status === "delivered" || order.status === "cancelled";
+   220→
+   221→  async function handleAdvance(e: React.MouseEvent, newStatus: OrderStatus) {
+   222→    e.stopPropagation();
+   223→    setUpdating(newStatus);
+   224→    try {
+   225→      await updateOrderStatus(order.id, newStatus);
+   226→    } catch (err) {
+   227→      console.error("Failed to update:", err);
+   228→    } finally {
+   229→      setUpdating(null);
+   230→    }
+   231→  }
+   232→
+   233→  return (
+   234→    <button
+   235→      onClick={onTap}
+   236→      className="w-full rounded-xl border border-white/[0.06] bg-white/[0.02] p-4 text-left transition-all active:scale-[0.98] active:bg-white/[0.04]"
+   237→    >
+   238→      {/* Top row */}
+   239→      <div className="flex items-start justify-between">
+   240→        <div>
+   241→          <p className="text-sm font-semibold">{serviceCfg?.label || order.serviceType}</p>
+   242→          <p className="mt-0.5 text-xs text-muted-foreground">
+   243→            {order.weight} lbs · ${order.total.toFixed(2)}
+   244→          </p>
+   245→        </div>
+   246→        <OrderStatusBadge status={order.status} />
+   247→      </div>
+   248→
+   249→      {/* Pickup info */}
+   250→      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+   251→        {order.pickupDate && (
+   252→          <span className="flex items-center gap-1">
+   253→            <Calendar className="h-3 w-3" />
+   254→            {order.pickupDate}
+   255→          </span>
+   256→        )}
+   257→        {order.pickupTime && (
+   258→          <span className="flex items-center gap-1">
+   259→            <Clock className="h-3 w-3" />
+   260→            {formatTimeSlot(order.pickupTime)}
+   261→          </span>
+   262→        )}
+   263→        {order.address?.street && (
+   264→          <span className="flex items-center gap-1 truncate max-w-[180px]">
+   265→            <MapPin className="h-3 w-3 shrink-0" />
+   266→            {order.address.street}
+   267→          </span>
+   268→        )}
+   269→      </div>
+   270→
+   271→      {/* Action buttons */}
+   272→      {!isTerminal && nextStatuses.length > 0 && (
+   273→        <div className="mt-3 flex flex-wrap gap-2">
+   274→          {nextStatuses.map((nextStatus) => {
+   275→            const isCancel = nextStatus === "cancelled";
+   276→            return (
+   277→              <span key={nextStatus} onClick={(e) => handleAdvance(e, nextStatus)}>
+   278→                <Button
+   279→                  size="sm"
+   280→                  disabled={updating !== null}
+   281→                  variant={isCancel ? "ghost" : "default"}
+   282→                  className={cn(
+   283→                    "h-8 text-xs",
+   284→                    isCancel
+   285→                      ? "text-red-400 hover:text-red-300 hover:bg-red-500/10"
+   286→                      : "gradient-button"
+   287→                  )}
+   288→                >
+   289→                  {updating === nextStatus ? (
+   290→                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+   291→                  ) : null}
+   292→                  {isCancel
+   293→                    ? t("admin.actions.cancel")
+   294→                    : t(`admin.actions.${nextStatus}`)}
+   295→                </Button>
+   296→              </span>
+   297→            );
+   298→          })}
+   299→        </div>
+   300→      )}
+   301→    </button>
+   302→  );
+   303→}
+   304→
+   305→function OrderDetailSheet({ order, onClose }: { order: OrderDoc; onClose: () => void }) {
+   306→  const { t } = useTranslation();
+   307→  const { updateOrderStatus, getNextStatuses, setCleaningQuote, chargeCleaningOrder } = useOrders();
+   308→  const [updating, setUpdating] = useState<string | null>(null);
+   309→
+   310→  const serviceCfg = SERVICE_TYPE_CONFIG[order.serviceType];
+   311→  const statusCfg = ORDER_STATUS_CONFIG[order.status];
+   312→  const nextStatuses = getNextStatuses(order.status);
+   313→  const isTerminal = order.status === "delivered" || order.status === "completed" || order.status === "cancelled";
+   314→  const isCleaning = isCleaningService(order.serviceType);
+   315→
+   316→  async function handleAdvance(newStatus: OrderStatus) {
+   317→    setUpdating(newStatus);
+   318→    try {
+   319→      await updateOrderStatus(order.id, newStatus);
+   320→    } catch (err) {
+   321→      console.error("Failed:", err);
+   322→    } finally {
+   323→      setUpdating(null);
+   324→    }
+   325→  }
+   326→
+   327→  // Decide which special section to show (weight confirm, quote price, charge, etc.)
+   328→  const showConfirmWeight = !isCleaning && order.status === "picked_up" && order.paymentMethod === "card" && order.paymentStatus !== "paid" && order.paymentStatus !== "paid_cash";
+   329→  const showMarkCashPaid = !isCleaning && order.status === "picked_up" && order.paymentMethod === "cash" && order.paymentStatus === "pending";
+   330→  const showSetQuote = isCleaning && order.status === "pending_quote";
+   331→  const showChargeCleaning = isCleaning && order.status === "accepted" && order.paymentMethod === "card" && order.paymentStatus !== "paid" && order.paymentStatus !== "paid_cash";
+   332→  const showCleaningCashPaid = isCleaning && order.status === "accepted" && order.paymentMethod === "cash" && order.paymentStatus === "pending";
+   333→
+   334→  return (
+   335→    <>
+   336→      {/* Scrollable content area */}
+   337→      <div className="flex-1 overflow-y-auto overscroll-contain px-5 pb-4">
+   338→        <div className="space-y-4">
+   339→          {/* Status + Price */}
+   340→          <div className="flex items-center justify-between">
+   341→            <OrderStatusBadge status={order.status} className="text-sm px-3 py-1" />
+   342→            <span className="text-xl font-bold">
+   343→              {isCleaning && !order.quotedPrice
+   344→                ? t("cleaning.admin.awaitingQuote")
+   345→                : `$${(order.quotedPrice || order.total || 0).toFixed(2)}`}
+   346→            </span>
+   347→          </div>
+   348→
+   349→          {/* Details Grid */}
+   350→          <div className="grid grid-cols-2 gap-3">
+   351→            <DetailItem label={t("admin.detail.service")} value={serviceCfg?.label || order.serviceType} />
+   352→            {isCleaning ? (
+   353→              <DetailItem label={t("cleaning.form.cleaningType")} value={order.cleaningType || "-"} />
+   354→            ) : (
+   355→              <DetailItem label={t("admin.detail.weight")} value={`${order.weight} lbs`} />
+   356→            )}
+   357→            {isCleaning ? (
+   358→              <DetailItem label={t("admin.detail.orderId")} value={order.id.slice(0, 8)} />
+   359→            ) : (
+   360→              <DetailItem label={t("admin.detail.pricePerLb")} value={`$${order.pricePerPound.toFixed(2)}`} />
+   361→            )}
+   362→            <DetailItem label={t("admin.detail.orderId")} value={order.id.slice(0, 8)} />
+   363→          </div>
+   364→
+   365→          {/* Cleaning description */}
+   366→          {isCleaning && order.cleaningDescription && (
+   367→            <div className="space-y-2">
+   368→              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+   369→                {t("cleaning.form.description")}
+   370→              </p>
+   371→              <div className="flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+   372→                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+   373→                <p className="text-sm">{order.cleaningDescription}</p>
+   374→              </div>
+   375→            </div>
+   376→          )}
+   377→
+   378→          {/* Pickup info */}
+   379→          <div className="space-y-2">
+   380→            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+   381→              {t("admin.detail.pickupInfo")}
+   382→            </p>
+   383→            <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3 space-y-1.5">
+   384→              {order.pickupDate && (
+   385→                <p className="flex items-center gap-2 text-sm">
+   386→                  <Calendar className="h-4 w-4 text-muted-foreground" />
+   387→                  {order.pickupDate}
+   388→                </p>
+   389→              )}
+   390→              {order.pickupTime && (
+   391→                <p className="flex items-center gap-2 text-sm">
+   392→                  <Clock className="h-4 w-4 text-muted-foreground" />
+   393→                  {formatTimeSlot(order.pickupTime)}
+   394→                </p>
+   395→              )}
+   396→              {order.address && (
+   397→                <NavigateButton address={order.address} />
+   398→              )}
+   399→            </div>
+   400→          </div>
+   401→
+   402→          {/* Notes */}
+   403→          {order.notes && (
+   404→            <div className="space-y-2">
+   405→              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+   406→                {t("common.notes")}
+   407→              </p>
+   408→              <div className="flex items-start gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+   409→                <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+   410→                <p className="text-sm">{order.notes}</p>
+   411→              </div>
+   412→            </div>
+   413→          )}
+   414→
+   415→          {/* Payment info */}
+   416→          <div className="space-y-2">
+   417→            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+   418→              {t("admin.detail.payment")}
+   419→            </p>
+   420→            <div className="flex items-center gap-2">
+   421→              {order.paymentMethod === "card" ? (
+   422→                <CreditCard className="h-4 w-4 text-purple-400" />
+   423→              ) : (
+   424→                <Banknote className="h-4 w-4 text-emerald-400" />
+   425→              )}
+   426→              <span className="text-sm">
+   427→                {order.paymentMethod === "card" ? t("payment.card") : t("payment.cash")}
+   428→              </span>
+   429→              {order.paymentStatus && (
+   430→                <span className={cn(
+   431→                  "ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium",
+   432→                  order.paymentStatus === "paid" || order.paymentStatus === "paid_cash" || order.paymentStatus === "card_saved"
+   433→                    ? "bg-emerald-500/15 text-emerald-400"
+   434→                    : order.paymentStatus === "failed"
+   435→                      ? "bg-red-500/15 text-red-400"
+   436→                      : "bg-amber-500/15 text-amber-400"
+   437→                )}>
+   438→                  {t(`payment.status.${order.paymentStatus}`)}
+   439→                </span>
+   440→              )}
+   441→            </div>
+   442→          </div>
+   443→
+   444→          {/* Special action sections (scroll with content) */}
+   445→          {showConfirmWeight && <ConfirmWeightAndCharge order={order} onCharged={onClose} />}
+   446→          {showMarkCashPaid && <MarkCashPaid order={order} onMarked={onClose} />}
+   447→          {showSetQuote && <SetQuotePrice order={order} onQuoted={onClose} />}
+   448→          {showChargeCleaning && <ChargeCleaningPayment order={order} onCharged={onClose} />}
+   449→          {showCleaningCashPaid && <MarkCashPaid order={order} onMarked={onClose} />}
+   450→
+   451→          {/* Created date */}
+   452→          <p className="text-center text-[10px] text-muted-foreground/50 pb-2">
+   453→            {t("admin.detail.created")}: {order.createdAt}
+   454→          </p>
+   455→        </div>
+   456→      </div>
+   457→
+   458→      {/* Sticky action buttons — always visible at bottom of sheet */}
+   459→      {!isTerminal && nextStatuses.length > 0 && (
+   460→        <div className="shrink-0 border-t border-white/[0.06] bg-background px-5 pt-3 pb-6">
+   461→          <div className="flex flex-wrap gap-2">
+   462→            {nextStatuses.map((nextStatus) => {
+   463→              const isCancel = nextStatus === "cancelled";
+   464→              return (
+   465→                <Button
+   466→                  key={nextStatus}
+   467→                  size="lg"
+   468→                  disabled={updating !== null}
+   469→                  variant={isCancel ? "outline" : "default"}
+   470→                  className={cn(
+   471→                    "flex-1 min-w-[120px] h-12 text-sm font-semibold rounded-xl",
+   472→                    isCancel
+   473→                      ? "border-red-500/20 text-red-400 hover:bg-red-500/10 hover:text-red-300"
+   474→                      : "gradient-button"
+   475→                  )}
+   476→                  onClick={() => handleAdvance(nextStatus)}
+   477→                >
+   478→                  {updating === nextStatus ? (
+   479→                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+   480→                  ) : null}
+   481→                  {isCancel
+   482→                    ? t("admin.actions.cancel")
+   483→                    : t(`admin.actions.${nextStatus}`)}
+   484→                </Button>
+   485→              );
+   486→            })}
+   487→          </div>
+   488→        </div>
+   489→      )}
+   490→    </>
+   491→  );
+   492→}
+   493→
+   494→function DetailItem({ label, value }: { label: string; value: string }) {
+   495→  return (
+   496→    <div className="rounded-lg border border-white/[0.06] bg-white/[0.02] p-3">
+   497→      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</p>
+   498→      <p className="mt-1 text-sm font-medium">{value}</p>
+   499→    </div>
+   500→  );
+   501→}
+   502→
+   503→/** Maps OrderStatus to i18n key */
+   504→function statusTabKey(status: OrderStatus): string {
+   505→  const map: Record<OrderStatus, string> = {
+   506→    pending: "pending",
+   507→    pending_quote: "pendingQuote",
+   508→    quoted: "quoted",
+   509→    accepted: "accepted",
+   510→    in_progress: "inProgress",
+   511→    completed: "completed",
+   512→    picked_up: "pickedUp",
+   513→    in_wash: "washing",
+   514→    ready: "ready",
+   515→    delivered: "delivered",
+   516→    cancelled: "cancelled",
+   517→  };
+   518→  return map[status];
+   519→}
+   520→
+   521→/* ──────────── Navigation button ──────────── */
+   522→
+   523→function NavigateButton({ address }: { address: { street: string; city: string; zip: string } }) {
+   524→  const { t } = useTranslation();
+   525→  const [distance, setDistance] = useState<string | null>(null);
+   526→  const [loading, setLoading] = useState(false);
+   527→
+   528→  const fullAddress = `${address.street}, ${address.city} ${address.zip}`;
+   529→  const mapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullAddress)}`;
+   530→
+   531→  async function getDistance() {
+   532→    setLoading(true);
+   533→    try {
+   534→      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+   535→        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 8000 })
+   536→      );
+   537→      const { latitude, longitude } = pos.coords;
+   538→
+   539→      const res = await fetch(
+   540→        `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${latitude},${longitude}&destinations=${encodeURIComponent(fullAddress)}&units=imperial&key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY || ""}`
+   541→      );
+   542→      const data = await res.json();
+   543→
+   544→      if (data.rows?.[0]?.elements?.[0]?.distance) {
+   545→        const miles = (data.rows[0].elements[0].distance.value / 1609.34).toFixed(1);
+   546→        setDistance(`${miles} mi`);
+   547→      }
+   548→    } catch {
+   549→      // Si falla geolocalización o API, simplemente no muestra distancia
+   550→    } finally {
+   551→      setLoading(false);
+   552→    }
+   553→  }
+   554→
+   555→  return (
+   556→    <button
+   557→      type="button"
+   558→      onClick={() => {
+   559→        getDistance();
+   560→        window.open(mapsUrl, "_blank");
+   561→      }}
+   562→      className="flex w-full items-center gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-left text-sm transition-all hover:bg-blue-500/10 active:scale-[0.98]"
+   563→    >
+   564→      <MapPin className="h-4 w-4 shrink-0 text-blue-400" />
+   565→      <span className="flex-1 truncate text-foreground/90">{fullAddress}</span>
+   566→      <div className="flex shrink-0 items-center gap-1.5">
+   567→        {loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+   568→        {distance && (
+   569→          <span className="rounded-full bg-blue-500/15 px-2 py-0.5 text-xs font-medium text-blue-400">
+   570→            {distance}
+   571→          </span>
+   572→        )}
+   573→        <Navigation className="h-4 w-4 text-blue-400" />
+   574→      </div>
+   575→    </button>
+   576→  );
+   577→}
+   578→
+   579→/* ──────────── Payment sub-components ──────────── */
+   580→
+   581→function ConfirmWeightAndCharge({ order, onCharged }: { order: OrderDoc; onCharged: () => void }) {
+   582→  const { t } = useTranslation();
+   583→  const [weight, setWeight] = useState(order.confirmedWeight ?? order.weight);
+   584→  const [loading, setLoading] = useState(false);
+   585→  const [error, setError] = useState<string | null>(null);
+   586→  const [success, setSuccess] = useState(false);
+   587→
+   588→  const confirmedTotal = weight * order.pricePerPound;
+   589→
+   590→  async function handleConfirmAndCharge() {
+   591→    setLoading(true);
+   592→    setError(null);
+   593→
+   594→    try {
+   595→      await initFirebase();
+   596→      const db = getFirestoreInstance();
+   597→      if (!db) throw new Error("Firestore not available");
+   598→
+   599→      // Update confirmed weight in Firestore
+   600→      await updateDoc(doc(db, "orders", order.id), {
+   601→        confirmedWeight: weight,
+   602→        confirmedTotal: confirmedTotal,
+   603→        total: confirmedTotal, // update displayed total
+   604→        updatedAt: new Date().toISOString(),
+   605→      });
+   606→
+   607→      // If card payment, charge via Stripe
+   608→      if (order.paymentMethod === "card" && order.stripePaymentMethodId) {
+   609→        const res = await fetch("/api/stripe/charge", {
+   610→          method: "POST",
+   611→          headers: { "Content-Type": "application/json" },
+   612→          body: JSON.stringify({
+   613→            orderId: order.id,
+   614→            stripeCustomerId: order.stripeCustomerId || null,
+   615→            stripePaymentMethodId: order.stripePaymentMethodId,
+   616→            amount: Math.round(confirmedTotal * 100),
+   617→            confirmedWeight: weight,
+   618→          }),
+   619→        });
+   620→
+   621→        const data = await res.json();
+   622→
+   623→        if (!res.ok) {
+   624→          await updateDoc(doc(db, "orders", order.id), {
+   625→            paymentStatus: "failed",
+   626→            updatedAt: new Date().toISOString(),
+   627→          });
+   628→          throw new Error(data.error || "Charge failed");
+   629→        }
+   630→
+   631→        // Mark as paid + guardar customerId si era nuevo
+   632→        const updateData: Record<string, unknown> = {
+   633→          paymentStatus: "paid",
+   634→          stripePaymentIntentId: data.paymentIntentId,
+   635→          updatedAt: new Date().toISOString(),
+   636→        };
+   637→        if (data.customerId && !order.stripeCustomerId) {
+   638→          updateData.stripeCustomerId = data.customerId;
+   639→        }
+   640→        await updateDoc(doc(db, "orders", order.id), updateData);
+   641→      }
+   642→
+   643→      setSuccess(true);
+   644→      setTimeout(() => onCharged(), 1500);
+   645→    } catch (err: any) {
+   646→      setError(err.message || t("payment.chargeError"));
+   647→    } finally {
+   648→      setLoading(false);
+   649→    }
+   650→  }
+   651→
+   652→  if (success) {
+   653→    return (
+   654→      <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-sm text-emerald-400">
+   655→        <Check className="h-5 w-5" />
+   656→        {t("payment.chargeSuccess")}
+   657→      </div>
+   658→    );
+   659→  }
+   660→
+   661→  return (
+   662→    <div className="space-y-3 rounded-xl border border-white/[0.06] bg-white/[0.02] p-4">
+   663→      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+   664→        <Scale className="h-3.5 w-3.5" />
+   665→        {t("admin.detail.confirmWeight")}
+   666→      </p>
+   667→
+   668→      <div className="flex items-center gap-3">
+   669→        <Input
+   670→          type="number"
+   671→          value={weight}
+   672→          onChange={(e) => setWeight(Number(e.target.value))}
+   673→          className="w-24 border-white/10 bg-white/5 text-center"
+   674→          min={1}
+   675→        />
+   676→        <span className="text-sm text-muted-foreground">lbs</span>
+   677→        <span className="ml-auto text-lg font-bold">
+   678→          ${confirmedTotal.toFixed(2)}
+   679→        </span>
+   680→      </div>
+   681→
+   682→      {error && (
+   683→        <div className="rounded-lg bg-red-500/10 p-2 text-xs text-red-400">{error}</div>
+   684→      )}
+   685→
+   686→      <Button
+   687→        onClick={handleConfirmAndCharge}
+   688→        disabled={loading || weight < 1}
+   689→        className={cn(
+   690→          "w-full h-12 text-sm font-semibold rounded-xl gap-2",
+   691→          order.paymentMethod === "card" ? "gradient-button" : ""
+   692→        )}
+   693→      >
+   694→        {loading ? (
+   695→          <Loader2 className="h-4 w-4 animate-spin" />
+   696→        ) : order.paymentMethod === "card" ? (
+   697→          <CreditCard className="h-4 w-4" />
+   698→        ) : (
+   699→          <Check className="h-4 w-4" />
+   700→        )}
+   701→        {order.paymentMethod === "card"
+   702→          ? t("admin.detail.confirmAndCharge")
+   703→          : t("admin.detail.confirmWeight")}
+   704→      </Button>
+   705→    </div>
+   706→  );
+   707→}
+   708→
+   709→function MarkCashPaid({ order, onMarked }: { order: OrderDoc; onMarked: () => void }) {
+   710→  const { t } = useTranslation();
+   711→  const [loading, setLoading] = useState(false);
+   712→
+   713→  async function handleMarkPaid() {
+   714→    setLoading(true);
+   715→    try {
+   716→      await initFirebase();
+   717→      const db = getFirestoreInstance();
+   718→      if (!db) return;
+   719→
+   720→      await updateDoc(doc(db, "orders", order.id), {
+   721→        paymentStatus: "paid_cash",
+   722→        updatedAt: new Date().toISOString(),
+   723→      });
+   724→      onMarked();
+   725→    } catch (err) {
+   726→      console.error("Failed to mark cash paid:", err);
+   727→    } finally {
+   728→      setLoading(false);
+   729→    }
+   730→  }
+   731→
+   732→  return (
+   733→    <Button
+   734→      onClick={handleMarkPaid}
+   735→      disabled={loading}
+   736→      variant="outline"
+   737→      className="w-full h-12 text-sm font-semibold rounded-xl gap-2 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/10"
+   738→    >
+   739→      {loading ? (
+   740→        <Loader2 className="h-4 w-4 animate-spin" />
+   741→      ) : (
+   742→        <Banknote className="h-4 w-4" />
+   743→      )}
+   744→      {t("admin.detail.markCashPaid")}
+   745→    </Button>
+   746→  );
+   747→}
+   748→
+   749→/* ──────────── Cleaning admin sub-components ──────────── */
+   750→
+   751→function SetQuotePrice({ order, onQuoted }: { order: OrderDoc; onQuoted: () => void }) {
+   752→  const { t } = useTranslation();
+   753→  const { setCleaningQuote } = useOrders();
+   754→  const [price, setPrice] = useState("");
+   755→  const [loading, setLoading] = useState(false);
+   756→  const [error, setError] = useState<string | null>(null);
+   757→  const [success, setSuccess] = useState(false);
+   758→
+   759→  async function handleSubmit() {
+   760→    const numPrice = Number(price);
+   761→    if (!numPrice || numPrice <= 0) return;
+   762→    setLoading(true);
+   763→    setError(null);
+   764→    try {
+   765→      await setCleaningQuote(order.id, numPrice);
+   766→      setSuccess(true);
+   767→      setTimeout(() => onQuoted(), 1200);
+   768→    } catch (err: any) {
+   769→      setError(err.message || "Error al cotizar");
+   770→    } finally {
+   771→      setLoading(false);
+   772→    }
+   773→  }
+   774→
+   775→  if (success) {
+   776→    return (
+   777→      <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-sm text-emerald-400">
+   778→        <Check className="h-5 w-5" />
+   779→        {t("cleaning.admin.quoteSent")}
+   780→      </div>
+   781→    );
+   782→  }
+   783→
+   784→  return (
+   785→    <div className="space-y-3 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+   786→      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+   787→        <DollarSign className="h-3.5 w-3.5 text-cyan-400" />
+   788→        {t("cleaning.admin.setQuoteTitle")}
+   789→      </p>
+   790→      <p className="text-xs text-muted-foreground">
+   791→        {t("cleaning.admin.setQuoteDescription")}
+   792→      </p>
+   793→      <div className="flex items-center gap-3">
+   794→        <div className="relative">
+   795→          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+   796→          <Input
+   797→            type="number"
+   798→            value={price}
+   799→            onChange={(e) => setPrice(e.target.value)}
+   800→            placeholder="0.00"
+   801→            className="w-32 border-white/10 bg-white/5 text-center pl-7"
+   802→            min={1}
+   803→            step={0.01}
+   804→          />
+   805→        </div>
+   806→        <Button
+   807→          onClick={handleSubmit}
+   808→          disabled={loading || !Number(price) || Number(price) <= 0}
+   809→          className="ml-auto gradient-button gap-2 h-10"
+   810→        >
+   811→          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <DollarSign className="h-4 w-4" />}
+   812→          {t("cleaning.admin.sendQuote")}
+   813→        </Button>
+   814→      </div>
+   815→      {error && (
+   816→        <div className="rounded-lg bg-red-500/10 p-2 text-xs text-red-400">{error}</div>
+   817→      )}
+   818→    </div>
+   819→  );
+   820→}
+   821→
+   822→function ChargeCleaningPayment({ order, onCharged }: { order: OrderDoc; onCharged: () => void }) {
+   823→  const { t } = useTranslation();
+   824→  const { chargeCleaningOrder } = useOrders();
+   825→  const [loading, setLoading] = useState(false);
+   826→  const [error, setError] = useState<string | null>(null);
+   827→  const [success, setSuccess] = useState(false);
+   828→
+   829→  async function handleCharge() {
+   830→    setLoading(true);
+   831→    setError(null);
+   832→    try {
+   833→      await chargeCleaningOrder(order.id);
+   834→      setSuccess(true);
+   835→      setTimeout(() => onCharged(), 1200);
+   836→    } catch (err: any) {
+   837→      setError(err.message || t("payment.chargeError"));
+   838→    } finally {
+   839→      setLoading(false);
+   840→    }
+   841→  }
+   842→
+   843→  if (success) {
+   844→    return (
+   845→      <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 p-4 text-sm text-emerald-400">
+   846→        <Check className="h-5 w-5" />
+   847→        {t("payment.chargeSuccess")}
+   848→      </div>
+   849→    );
+   850→  }
+   851→
+   852→  return (
+   853→    <div className="space-y-3 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
+   854→      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+   855→        <CreditCard className="h-3.5 w-3.5 text-purple-400" />
+   856→        {t("cleaning.admin.chargeCard")}
+   857→      </p>
+   858→      <div className="flex items-center justify-between">
+   859→        <span className="text-sm text-muted-foreground">{t("cleaning.admin.quotedAmount")}:</span>
+   860→        <span className="text-lg font-bold">${(order.quotedPrice || 0).toFixed(2)}</span>
+   861→      </div>
+   862→      {error && (
+   863→        <div className="rounded-lg bg-red-500/10 p-2 text-xs text-red-400">{error}</div>
+   864→      )}
+   865→      <Button
+   866→        onClick={handleCharge}
+   867→        disabled={loading}
+   868→        className="w-full gradient-button gap-2 h-12"
+   869→      >
+   870→        {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+   871→        {t("cleaning.admin.chargeNow")}
+   872→      </Button>
+   873→    </div>
+   874→  );
+   875→}
