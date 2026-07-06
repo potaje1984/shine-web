@@ -5,20 +5,15 @@ import { Resend } from "resend";
  * POST /api/reset-password
  *
  * Strategy:
- * 1. Try Firebase Admin + Resend → branded Shine email
- * 2. If Firebase Admin fails → return {fallback:true} so frontend
- *    uses Firebase Client SDK (which now sends via Resend SMTP)
- *
- * Body: { email: string }
+ * 1. Use Google Auth Library + Identity Toolkit REST API to generate reset link
+ * 2. Send branded email via Resend
+ * 3. Fallback to Firebase Client SDK if env vars missing
  */
-
-let _adminAuth: import("firebase-admin/auth").Auth | null = null;
-let _initError: string | null = null;
 
 function parsePrivateKey(rawKey: string): string {
   let key = rawKey.trim();
 
-  // Remove surrounding quotes (single or double) if present
+  // Remove surrounding quotes
   if (
     (key.startsWith('"') && key.endsWith('"')) ||
     (key.startsWith("'") && key.endsWith("'"))
@@ -26,58 +21,110 @@ function parsePrivateKey(rawKey: string): string {
     key = key.slice(1, -1).trim();
   }
 
-  // Replace literal \n with actual newlines (handles env var escaping)
+  // Replace literal \n with actual newlines
   key = key.replace(/\\n/g, "\n");
 
-  // If still no newlines but has the PEM header, insert newlines after each line
-  // (some env systems mangle PEM into a single line)
+  // If single-line PEM, reformat with proper line breaks
   if (!key.includes("\n") && key.includes("-----BEGIN")) {
-    // PEM lines are typically 64 chars wide
-    const header = key.substring(0, key.indexOf("-----END"));
-    const footer = key.substring(key.indexOf("-----END"));
-    const body = header.replace("-----BEGIN PRIVATE KEY-----", "").trim();
+    const header = "-----BEGIN PRIVATE KEY-----\n";
+    const footer = "\n-----END PRIVATE KEY-----\n";
+    const body = key
+      .replace("-----BEGIN PRIVATE KEY-----", "")
+      .replace("-----END PRIVATE KEY-----", "")
+      .trim();
     const formatted = body.match(/.{1,64}/g)?.join("\n") || body;
-    key = "-----BEGIN PRIVATE KEY-----\n" + formatted + "\n" + footer + "\n";
+    key = header + formatted + footer;
   }
 
   return key;
 }
 
-async function getAdminAuth() {
-  if (_initError) throw new Error(_initError);
-  if (_adminAuth) return _adminAuth;
+let _cachedToken: { token: string; expiresAt: number } | null = null;
+
+async function getAccessToken(): Promise<string> {
+  // Cache token for 50 minutes (tokens last 60 min)
+  if (_cachedToken && Date.now() < _cachedToken.expiresAt) {
+    return _cachedToken.token;
+  }
 
   const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
   const rawKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
   const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
 
   if (!clientEmail || !rawKey || !projectId) {
-    const missing = [];
-    if (!clientEmail) missing.push("FIREBASE_ADMIN_CLIENT_EMAIL");
-    if (!rawKey) missing.push("FIREBASE_ADMIN_PRIVATE_KEY");
-    if (!projectId) missing.push("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
-    _initError = `Missing env vars: ${missing.join(", ")}`;
-    throw new Error(_initError);
+    throw new Error(
+      `Missing env vars: ${[
+        !clientEmail && "FIREBASE_ADMIN_CLIENT_EMAIL",
+        !rawKey && "FIREBASE_ADMIN_PRIVATE_KEY",
+        !projectId && "NEXT_PUBLIC_FIREBASE_PROJECT_ID",
+      ]
+        .filter(Boolean)
+        .join(", ")}`
+    );
   }
 
   const privateKey = parsePrivateKey(rawKey);
 
-  try {
-    const { initializeApp, getApps, cert } = await import("firebase-admin/app");
-    const { getAuth } = await import("firebase-admin/auth");
+  // Dynamic import to avoid issues at build time
+  const { GoogleAuth } = await import("google-auth-library");
 
-    const credential = cert({ clientEmail, privateKey, projectId });
+  const auth = new GoogleAuth({
+    credentials: {
+      client_email: clientEmail,
+      private_key: privateKey,
+    },
+    scopes: ["https://www.googleapis.com/auth/identitytoolkit"],
+  });
 
-    const app = getApps().length > 0
-      ? getApps()[0]
-      : initializeApp({ credential });
+  const client = await auth.getClient();
+  const tokenResponse = await client.getAccessToken();
 
-    _adminAuth = getAuth(app);
-    return _adminAuth;
-  } catch (err: any) {
-    _initError = err.message;
-    throw err;
+  if (!tokenResponse.token) {
+    throw new Error("Failed to obtain access token");
   }
+
+  _cachedToken = {
+    token: tokenResponse.token,
+    expiresAt: Date.now() + 50 * 60 * 1000,
+  };
+
+  return tokenResponse.token;
+}
+
+async function generateResetLink(email: string): Promise<string> {
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID!;
+  const accessToken = await getAccessToken();
+
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/projects/${projectId}/accounts:sendOobCode`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        requestType: "PASSWORD_RESET",
+        email,
+        returnOobLink: true,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(
+      `Identity Toolkit error ${response.status}: ${err?.error?.message || JSON.stringify(err)}`
+    );
+  }
+
+  const data = await response.json();
+
+  if (!data.oobLink) {
+    throw new Error("No oobLink in response");
+  }
+
+  return data.oobLink;
 }
 
 function buildResetHtml(resetLink: string, displayName: string): string {
@@ -172,23 +219,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ fallback: true, reason: "RESEND_API_KEY not set" });
     }
 
-    // 1. Try Firebase Admin approach (branded email via Resend)
+    // 1. Try Google Auth + Identity Toolkit approach (branded email via Resend)
     try {
-      const auth = await getAdminAuth();
+      const resetLink = await generateResetLink(email);
 
-      // Get user display name
-      let displayName = "there";
-      try {
-        const userRecord = await auth.getUserByEmail(email);
-        displayName = userRecord.displayName || userRecord.email?.split("@")[0] || "there";
-      } catch {
-        // User may not exist
-      }
-
-      // Generate reset link (does NOT send email)
-      const { generatePasswordResetLink } = await import("firebase-admin/auth");
-      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://shinecleann.com";
-      const resetLink = await generatePasswordResetLink(auth, email, { url: baseUrl });
+      // Use email prefix as display name (we don't have Admin SDK to look up user)
+      const displayName = email.split("@")[0] || "there";
 
       // Send branded email via Resend
       const resend = new Resend(process.env.RESEND_API_KEY);
@@ -205,7 +241,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true, method: "resend" });
 
     } catch (adminErr: any) {
-      // Firebase Admin failed — tell frontend to use fallback
+      // Google Auth failed — tell frontend to use fallback
       console.error("[reset-password] Admin failed, using fallback:", adminErr.message);
       return NextResponse.json({ fallback: true, reason: adminErr.message });
     }
@@ -221,8 +257,7 @@ export async function POST(request: Request) {
 
 /**
  * GET /api/reset-password?debug=1
- * Debug endpoint to check if Firebase Admin env vars are configured correctly.
- * Remove this endpoint in production after debugging.
+ * Debug endpoint to check configuration.
  */
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -239,20 +274,13 @@ export async function GET(request: Request) {
     ? `${rawKey.trim().substring(0, 30)}...${rawKey.trim().slice(-20)}`
     : "NOT SET";
 
-  const hasQuotes = rawKey
-    ? (rawKey.startsWith('"') || rawKey.endsWith('"') || rawKey.startsWith("'") || rawKey.endsWith("'"))
-    : false;
-
-  const hasLiteralNewlines = rawKey ? rawKey.includes("\\n") : false;
-  const hasRealNewlines = rawKey ? rawKey.includes("\n") : false;
-
-  // Try initializing
-  let initResult = "not attempted";
+  // Try getting access token
+  let tokenResult = "not attempted";
   try {
-    const auth = await getAdminAuth();
-    initResult = "SUCCESS - Firebase Admin initialized";
+    const token = await getAccessToken();
+    tokenResult = `SUCCESS (token: ${token.substring(0, 20)}...)`;
   } catch (err: any) {
-    initResult = `FAILED: ${err.message}`;
+    tokenResult = `FAILED: ${err.message}`;
   }
 
   return NextResponse.json({
@@ -261,12 +289,10 @@ export async function GET(request: Request) {
       set: !!rawKey,
       length: rawKey?.length || 0,
       preview: keyPreview,
-      hasSurroundingQuotes: hasQuotes,
-      hasLiteralBackslashN: hasLiteralNewlines,
-      hasRealNewlines: hasRealNewlines,
     },
     projectId: projectId ? "SET: " + projectId : "NOT SET",
     resendKey: resendKey ? `SET (ends ...${resendKey.slice(-4)})` : "NOT SET",
-    firebaseAdminInit: initResult,
+    accessToken: tokenResult,
+    approach: "google-auth-library + Identity Toolkit REST API (no firebase-admin)",
   });
 }
