@@ -15,6 +15,34 @@ import { Resend } from "resend";
 let _adminAuth: import("firebase-admin/auth").Auth | null = null;
 let _initError: string | null = null;
 
+function parsePrivateKey(rawKey: string): string {
+  let key = rawKey.trim();
+
+  // Remove surrounding quotes (single or double) if present
+  if (
+    (key.startsWith('"') && key.endsWith('"')) ||
+    (key.startsWith("'") && key.endsWith("'"))
+  ) {
+    key = key.slice(1, -1).trim();
+  }
+
+  // Replace literal \n with actual newlines (handles env var escaping)
+  key = key.replace(/\\n/g, "\n");
+
+  // If still no newlines but has the PEM header, insert newlines after each line
+  // (some env systems mangle PEM into a single line)
+  if (!key.includes("\n") && key.includes("-----BEGIN")) {
+    // PEM lines are typically 64 chars wide
+    const header = key.substring(0, key.indexOf("-----END"));
+    const footer = key.substring(key.indexOf("-----END"));
+    const body = header.replace("-----BEGIN PRIVATE KEY-----", "").trim();
+    const formatted = body.match(/.{1,64}/g)?.join("\n") || body;
+    key = "-----BEGIN PRIVATE KEY-----\n" + formatted + "\n" + footer + "\n";
+  }
+
+  return key;
+}
+
 async function getAdminAuth() {
   if (_initError) throw new Error(_initError);
   if (_adminAuth) return _adminAuth;
@@ -24,28 +52,25 @@ async function getAdminAuth() {
   const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
 
   if (!clientEmail || !rawKey || !projectId) {
-    _initError = "Missing Firebase Admin env vars";
+    const missing = [];
+    if (!clientEmail) missing.push("FIREBASE_ADMIN_CLIENT_EMAIL");
+    if (!rawKey) missing.push("FIREBASE_ADMIN_PRIVATE_KEY");
+    if (!projectId) missing.push("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
+    _initError = `Missing env vars: ${missing.join(", ")}`;
     throw new Error(_initError);
   }
 
-  // Handle private key newlines for different env formats
-  let privateKey = rawKey;
-  if (privateKey.includes("\\n")) {
-    privateKey = privateKey.replace(/\\n/g, "\n");
-  } else if (!privateKey.includes("-----BEGIN")) {
-    // Maybe base64 encoded
-    try {
-      privateKey = Buffer.from(rawKey, "base64").toString("utf-8");
-    } catch { /* not base64, use as-is */ }
-  }
+  const privateKey = parsePrivateKey(rawKey);
 
   try {
     const { initializeApp, getApps, cert } = await import("firebase-admin/app");
     const { getAuth } = await import("firebase-admin/auth");
 
+    const credential = cert({ clientEmail, privateKey, projectId });
+
     const app = getApps().length > 0
       ? getApps()[0]
-      : initializeApp({ credential: cert({ clientEmail, privateKey, projectId }) });
+      : initializeApp({ credential });
 
     _adminAuth = getAuth(app);
     return _adminAuth;
@@ -192,4 +217,56 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+/**
+ * GET /api/reset-password?debug=1
+ * Debug endpoint to check if Firebase Admin env vars are configured correctly.
+ * Remove this endpoint in production after debugging.
+ */
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  if (searchParams.get("debug") !== "1") {
+    return NextResponse.json({ error: "Use ?debug=1" }, { status: 400 });
+  }
+
+  const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+  const rawKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  const resendKey = process.env.RESEND_API_KEY;
+
+  const keyPreview = rawKey
+    ? `${rawKey.trim().substring(0, 30)}...${rawKey.trim().slice(-20)}`
+    : "NOT SET";
+
+  const hasQuotes = rawKey
+    ? (rawKey.startsWith('"') || rawKey.endsWith('"') || rawKey.startsWith("'") || rawKey.endsWith("'"))
+    : false;
+
+  const hasLiteralNewlines = rawKey ? rawKey.includes("\\n") : false;
+  const hasRealNewlines = rawKey ? rawKey.includes("\n") : false;
+
+  // Try initializing
+  let initResult = "not attempted";
+  try {
+    const auth = await getAdminAuth();
+    initResult = "SUCCESS - Firebase Admin initialized";
+  } catch (err: any) {
+    initResult = `FAILED: ${err.message}`;
+  }
+
+  return NextResponse.json({
+    clientEmail: clientEmail ? "SET: " + clientEmail : "NOT SET",
+    privateKey: {
+      set: !!rawKey,
+      length: rawKey?.length || 0,
+      preview: keyPreview,
+      hasSurroundingQuotes: hasQuotes,
+      hasLiteralBackslashN: hasLiteralNewlines,
+      hasRealNewlines: hasRealNewlines,
+    },
+    projectId: projectId ? "SET: " + projectId : "NOT SET",
+    resendKey: resendKey ? `SET (ends ...${resendKey.slice(-4)})` : "NOT SET",
+    firebaseAdminInit: initResult,
+  });
 }
