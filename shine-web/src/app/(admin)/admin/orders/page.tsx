@@ -8,8 +8,8 @@
  * - Order detail bottom sheet on tap
  */
 
-import { useState, useEffect } from "react";
-import { ShoppingBag, Loader2, ChevronUp, MapPin, FileText, Calendar, Clock, CreditCard, Banknote, Check, Scale, Navigation, Home, DollarSign } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { ShoppingBag, Loader2, ChevronUp, MapPin, FileText, Calendar, Clock, CreditCard, Banknote, Check, Scale, Navigation, Home, DollarSign, Camera, AlertTriangle, PackageCheck } from "lucide-react";
 import { useOrders } from "@/hooks/use-orders";
 import { useCollection, orderBy } from "@/hooks/use-firestore";
 import { initFirebase, getFirestoreInstance } from "@/lib/firebase";
@@ -324,12 +324,13 @@ function OrderDetailSheet({ order, onClose }: { order: OrderDoc; onClose: () => 
     }
   }
 
-  // Decide which special section to show (weight confirm, quote price, charge, etc.)
+  // Decide which special section to show
   const showConfirmWeight = !isCleaning && order.status === "picked_up" && order.paymentMethod === "card" && order.paymentStatus !== "paid" && order.paymentStatus !== "paid_cash";
   const showMarkCashPaid = !isCleaning && order.status === "picked_up" && order.paymentMethod === "cash" && order.paymentStatus === "pending";
   const showSetQuote = isCleaning && order.status === "pending_quote";
   const showChargeCleaning = isCleaning && order.status === "accepted" && order.paymentMethod === "card" && order.paymentStatus !== "paid" && order.paymentStatus !== "paid_cash";
   const showCleaningCashPaid = isCleaning && order.status === "accepted" && order.paymentMethod === "cash" && order.paymentStatus === "pending";
+  const showDeliveryConfirmation = nextStatuses.includes("delivered");
 
   return (
     <>
@@ -447,6 +448,7 @@ function OrderDetailSheet({ order, onClose }: { order: OrderDoc; onClose: () => 
           {showSetQuote && <SetQuotePrice order={order} onQuoted={onClose} />}
           {showChargeCleaning && <ChargeCleaningPayment order={order} onCharged={onClose} />}
           {showCleaningCashPaid && <MarkCashPaid order={order} onMarked={onClose} />}
+          {showDeliveryConfirmation && <DeliveryConfirmation order={order} onDelivered={onClose} />}
 
           {/* Created date */}
           <p className="text-center text-[10px] text-muted-foreground/50 pb-2">
@@ -455,8 +457,8 @@ function OrderDetailSheet({ order, onClose }: { order: OrderDoc; onClose: () => 
         </div>
       </div>
 
-      {/* Sticky action buttons — always visible at bottom of sheet */}
-      {!isTerminal && nextStatuses.length > 0 && (
+      {/* Sticky action buttons — hide when delivery confirmation is shown */}
+      {!isTerminal && nextStatuses.length > 0 && !showDeliveryConfirmation && (
         <div className="shrink-0 border-t border-white/[0.06] bg-background px-5 pt-3 pb-6">
           <div className="flex flex-wrap gap-2">
             {nextStatuses.map((nextStatus) => {
@@ -898,6 +900,228 @@ function ChargeCleaningPayment({ order, onCharged }: { order: OrderDoc; onCharge
       >
         {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
         {t("cleaning.admin.chargeNow")}
+      </Button>
+    </div>
+  );
+}
+
+/* ──────────── Delivery Confirmation ──────────── */
+
+function DeliveryConfirmation({ order, onDelivered }: { order: OrderDoc; onDelivered: () => void }) {
+  const { t } = useTranslation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [preview, setPreview] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setError(t("delivery.errorNotImage") || "Please select an image file");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError(t("delivery.errorTooLarge") || "Image must be under 10MB");
+      return;
+    }
+    setPhoto(file);
+    setError(null);
+    setLocationError(null);
+
+    // Generate preview
+    const reader = new FileReader();
+    reader.onload = () => setPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  async function handleConfirm() {
+    if (!photo) {
+      setError(t("delivery.errorNoPhoto") || "Please take a delivery photo");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setLocationError(null);
+
+    try {
+      // Get current location
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) =>
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          timeout: 10000,
+          enableHighAccuracy: true,
+        })
+      );
+      const { latitude, longitude } = pos.coords;
+
+      // Build form data
+      const formData = new FormData();
+      formData.append("orderId", order.id);
+      formData.append("photo", photo);
+      formData.append("lat", latitude.toString());
+      formData.append("lng", longitude.toString());
+
+      const res = await fetch("/api/confirm-delivery", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        if (data.error === "LOCATION_MISMATCH") {
+          setLocationError(data.message);
+          setError(null);
+        } else {
+          throw new Error(data.error || "Failed to confirm delivery");
+        }
+        return;
+      }
+
+      setSuccess(true);
+      setTimeout(() => onDelivered(), 2000);
+    } catch (err: any) {
+      if (err.code === 1) {
+        // Geolocation permission denied
+        setError(t("delivery.errorLocationDenied") || "Location permission is required to confirm delivery. Please enable it and try again.");
+      } else if (err.code === 2 || err.code === 3) {
+        setError(t("delivery.errorLocationUnavailable") || "Could not get your location. Please try again.");
+      } else {
+        setError(err.message || "Failed to confirm delivery");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (success) {
+    return (
+      <div className="space-y-3 rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/15">
+            <PackageCheck className="h-6 w-6 text-emerald-400" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-emerald-400">
+              {t("delivery.success") || "Delivery Confirmed!"}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {t("delivery.successDetail") || "Photo sent to customer via email"}
+            </p>
+          </div>
+        </div>
+        {preview && (
+          <img
+            src={preview}
+            alt="Delivery"
+            className="w-full rounded-lg border border-white/10"
+          />
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4 rounded-xl border border-purple-500/20 bg-purple-500/5 p-4">
+      {/* Header */}
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+        <PackageCheck className="h-3.5 w-3.5 text-purple-400" />
+        {t("delivery.title") || "Confirm Delivery"}
+      </p>
+
+      <p className="text-xs text-muted-foreground">
+        {t("delivery.description") || "Take a photo at the delivery location to confirm. Your location will be verified."}
+      </p>
+
+      {/* Address display */}
+      {order.address && (
+        <div className="flex items-start gap-2 rounded-lg bg-white/[0.03] p-3 text-xs text-muted-foreground">
+          <MapPin className="h-4 w-4 shrink-0 text-blue-400 mt-0.5" />
+          <span>{order.address.street}, {order.address.city} {order.address.zip}</span>
+        </div>
+      )}
+
+      {/* Photo capture area */}
+      <div
+        onClick={() => fileInputRef.current?.click()}
+        className={cn(
+          "relative flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 transition-all active:scale-[0.98]",
+          preview
+            ? "border-purple-500/30 bg-purple-500/5"
+            : "border-white/10 bg-white/[0.02] hover:border-purple-500/30 hover:bg-purple-500/5"
+        )}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handlePhotoChange}
+          className="hidden"
+        />
+        {preview ? (
+          <>
+            <img
+              src={preview}
+              alt="Delivery photo"
+              className="mb-3 max-h-48 w-full rounded-lg object-cover"
+            />
+            <p className="text-xs text-muted-foreground">
+              {t("delivery.tapToRetake") || "Tap to retake photo"}
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-purple-500/15">
+              <Camera className="h-6 w-6 text-purple-400" />
+            </div>
+            <p className="text-sm font-medium text-foreground/80">
+              {t("delivery.takePhoto") || "Take Delivery Photo"}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t("delivery.photoHint") || "Tap to open camera or select from gallery"}
+            </p>
+          </>
+        )}
+      </div>
+
+      {/* Location error (red banner) */}
+      {locationError && (
+        <div className="flex items-start gap-2 rounded-xl border border-red-500/20 bg-red-500/10 p-3">
+          <AlertTriangle className="h-4 w-4 shrink-0 text-red-400 mt-0.5" />
+          <div>
+            <p className="text-xs font-semibold text-red-400">
+              {t("delivery.wrongLocation") || "Wrong Location"}
+            </p>
+            <p className="mt-0.5 text-[11px] text-red-400/80">{locationError}</p>
+          </div>
+        </div>
+      )}
+
+      {/* General error */}
+      {error && !locationError && (
+        <div className="rounded-lg bg-red-500/10 p-2 text-xs text-red-400">{error}</div>
+      )}
+
+      {/* Confirm button */}
+      <Button
+        onClick={handleConfirm}
+        disabled={loading || !photo}
+        className="w-full h-12 text-sm font-semibold rounded-xl gap-2 gradient-button"
+      >
+        {loading ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <PackageCheck className="h-4 w-4" />
+        )}
+        {loading
+          ? (t("delivery.confirming") || "Confirming...")
+          : (t("delivery.confirmButton") || "Confirm Delivery")}
+        }
       </Button>
     </div>
   );
