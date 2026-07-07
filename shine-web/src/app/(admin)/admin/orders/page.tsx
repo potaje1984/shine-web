@@ -1118,10 +1118,7 @@ function DeliveryConfirmation({ order, onDelivered }: { order: OrderDoc; onDeliv
         ) : (
           <PackageCheck className="h-4 w-4" />
         )}
-        {loading
-          ? (t("delivery.confirming") || "Confirming...")
-          : (t("delivery.confirmButton") || "Confirm Delivery")}
-        }
+        {loading ? (t("delivery.confirming") || "Confirming...") : (t("delivery.confirmButton") || "Confirm Delivery")}
       </Button>
     </div>
   );
