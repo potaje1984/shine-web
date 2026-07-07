@@ -98,6 +98,7 @@ export interface OrderDoc {
   pickupDate: string | null;
   pickupTime: string | null; // "08:00", "09:00", etc.
   deliveryDate: string | null;
+  deliveryPhotoUrl: string | null;
   address: Address | null;
   notes: string | null;
   // Cleaning-specific fields

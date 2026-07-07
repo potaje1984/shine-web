@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ShoppingBag, FileText, Check, X, Loader2, DollarSign, AlertCircle } from "lucide-react";
+import { ShoppingBag, FileText, Check, X, Loader2, DollarSign, AlertCircle, PackageCheck, Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n";
 
@@ -212,6 +212,29 @@ export function OrdersTable() {
                         <X className="h-3.5 w-3.5" />
                         {t("cleaning.customer.rejectQuote")}
                       </Button>
+                    </div>
+                  </div>
+                )}
+              {/* Delivery photo */}
+                {order.status === "delivered" && order.deliveryPhotoUrl && (
+                  <div className="mt-3 flex items-start gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+                    <PackageCheck className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-emerald-400 flex items-center gap-1.5">
+                        <Camera className="h-3 w-3" />
+                        {t("delivery.photoLabel") || "Delivery Photo"}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        {t("delivery.photoDescription") || "Your order has been delivered. Tap to view the confirmation photo."}
+                      </p>
+                      <a href={order.deliveryPhotoUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block">
+                        <img
+                          src={order.deliveryPhotoUrl}
+                          alt="Delivery confirmation"
+                          className="max-h-40 w-full rounded-lg border border-white/10 object-cover"
+                          loading="lazy"
+                        />
+                      </a>
                     </div>
                   </div>
                 )}
