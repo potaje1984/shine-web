@@ -221,6 +221,7 @@ export async function POST(request: Request) {
     const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
     const rawKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
     const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+    const storageBucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
 
     if (!clientEmail || !rawKey || !projectId) {
       return NextResponse.json({ error: "Firebase Admin not configured" }, { status: 500 });
@@ -232,7 +233,10 @@ export async function POST(request: Request) {
     const { getStorage } = await import("firebase-admin/storage");
     const { getFirestore: getAdminDb } = await import("firebase-admin/firestore");
 
-    let app = getApps().length > 0 ? getApps()[0] : initApp({ credential: cert({ clientEmail, privateKey, projectId }) });
+    const appConfig: any = { credential: cert({ clientEmail, privateKey, projectId }) };
+    if (storageBucket) appConfig.storageBucket = storageBucket;
+
+    let app = getApps().length > 0 ? getApps()[0] : initApp(appConfig);
     const storage = getStorage(app);
     const adminDb = getAdminDb(app);
 
