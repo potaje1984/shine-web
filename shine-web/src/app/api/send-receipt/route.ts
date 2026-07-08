@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import { initFirebase, getFirestoreInstance } from "@/lib/firebase";
-import { doc, getDoc } from "firebase/firestore";
 import { sendReceiptEmail } from "@/lib/email";
 import type { OrderDoc, UserDoc } from "@/lib/types";
 
@@ -8,13 +6,31 @@ import type { OrderDoc, UserDoc } from "@/lib/types";
  * POST /api/send-receipt
  * Envía un recibo por email al cliente de un pedido.
  * Se usa principalmente cuando el admin marca un pago en efectivo.
+ * Uses Firebase Admin SDK (via dynamic import) for server-side Firestore access.
  *
  * Body: { orderId: string, lang?: "es" | "en" }
  */
+
+function parsePrivateKey(rawKey: string): string {
+  let key = rawKey.trim();
+  if ((key.startsWith('"') && key.endsWith('"')) || (key.startsWith("'") && key.endsWith("'"))) {
+    key = key.slice(1, -1).trim();
+  }
+  key = key.replace(/\\n/g, "\n");
+  if (!key.includes("\n") && key.includes("-----BEGIN")) {
+    const header = "-----BEGIN PRIVATE KEY-----\n";
+    const footer = "\n-----END PRIVATE KEY-----\n";
+    const body = key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "").trim();
+    const formatted = body.match(/.{1,64}/g)?.join("\n") || body;
+    key = header + formatted + footer;
+  }
+  return key;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { orderId, lang = "es" } = body as { orderId: string; lang?: "es" | "en" };
+    const { orderId, lang = "en" } = body as { orderId: string; lang?: "es" | "en" };
 
     if (!orderId) {
       return NextResponse.json(
@@ -23,53 +39,51 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verificar que hay API key de Resend (no es error fatal si no la hay,
-    // pero informamos al admin)
     if (!process.env.RESEND_API_KEY) {
       return NextResponse.json(
-        { error: "Email service not configured. Set RESEND_API_KEY in .env.local" },
+        { error: "Email service not configured. Set RESEND_API_KEY" },
         { status: 503 }
       );
     }
 
-    await initFirebase();
-    const db = getFirestoreInstance();
-    if (!db) {
+    // Use Firebase Admin for server-side Firestore access
+    const clientEmail = process.env.FIREBASE_ADMIN_CLIENT_EMAIL;
+    const rawKey = process.env.FIREBASE_ADMIN_PRIVATE_KEY;
+    const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+
+    if (!clientEmail || !rawKey || !projectId) {
       return NextResponse.json(
-        { error: "Firestore not available" },
+        { error: "Firebase Admin not configured" },
         { status: 500 }
       );
     }
 
-    // 1. Obtener el pedido
-    const orderRef = doc(db, "orders", orderId);
-    const orderSnap = await getDoc(orderRef);
-    if (!orderSnap.exists()) {
-      return NextResponse.json(
-        { error: "Order not found" },
-        { status: 404 }
-      );
-    }
-    const orderData = { id: orderSnap.id, ...orderSnap.data() } as OrderDoc;
+    const privateKey = parsePrivateKey(rawKey);
+    const { initializeApp: initApp, getApps, cert } = await import("firebase-admin/app");
+    const { getFirestore: getAdminDb } = await import("firebase-admin/firestore");
 
-    // 2. Obtener datos del cliente
-    const userRef = doc(db, "users", orderData.userId);
-    const userSnap = await getDoc(userRef);
-    if (!userSnap.exists()) {
-      return NextResponse.json(
-        { error: "Customer not found" },
-        { status: 404 }
-      );
+    const appConfig: any = { credential: cert({ clientEmail, privateKey, projectId }) };
+    let app = getApps().length > 0 ? getApps()[0] : initApp(appConfig);
+    const adminDb = getAdminDb(app);
+
+    // 1. Fetch order
+    const orderDoc = await adminDb.collection("orders").doc(orderId).get();
+    if (!orderDoc.exists) {
+      return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
-    const userData = userSnap.data() as UserDoc;
+    const orderData = { id: orderDoc.id, ...orderDoc.data() } as OrderDoc;
+
+    // 2. Fetch customer
+    const userDoc = await adminDb.collection("users").doc(orderData.userId).get();
+    if (!userDoc.exists) {
+      return NextResponse.json({ error: "Customer not found" }, { status: 404 });
+    }
+    const userData = userDoc.data() as UserDoc;
     if (!userData.email) {
-      return NextResponse.json(
-        { error: "Customer has no email address" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Customer has no email" }, { status: 400 });
     }
 
-    // 3. Enviar recibo
+    // 3. Send receipt
     const sent = await sendReceiptEmail({
       order: orderData,
       customer: {
@@ -83,10 +97,7 @@ export async function POST(request: Request) {
     if (sent) {
       return NextResponse.json({ success: true, message: "Receipt sent to " + userData.email });
     } else {
-      return NextResponse.json(
-        { error: "Failed to send receipt" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "Failed to send receipt" }, { status: 500 });
     }
   } catch (err: any) {
     console.error("[api/send-receipt] Error:", err);
