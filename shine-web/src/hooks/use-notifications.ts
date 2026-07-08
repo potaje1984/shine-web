@@ -187,11 +187,23 @@ export function useNotifications() {
     }
   }, [notifications]);
 
+  const deleteNotification = useCallback(async (notificationId: string) => {
+    const db = getFirestoreInstance();
+    if (!db) return;
+    try {
+      const { deleteDoc } = await import("firebase/firestore");
+      await deleteDoc(doc(db, "notifications", notificationId));
+    } catch (e) {
+      console.warn("[useNotifications] deleteNotification error:", e);
+    }
+  }, []);
+
   return {
     notifications,
     unreadCount,
     loading,
     markAsRead,
     markAllAsRead,
+    deleteNotification,
   };
 }
