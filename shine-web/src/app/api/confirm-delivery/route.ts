@@ -251,20 +251,40 @@ export async function POST(request: Request) {
 
     // Validate location if address exists
     if (orderAddress?.street) {
+      const fullAddr = `${orderAddress.street}, ${orderAddress.city} ${orderAddress.zip}`;
+      console.log("[confirm-delivery] Address:", fullAddr);
+      console.log("[confirm-delivery] Maps key set:", !!process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY);
+
       const coords = await geocodeAddress(orderAddress);
-      if (coords) {
-        const distance = haversineDistance(lat, lng, coords.lat, coords.lng);
-        if (distance > DELIVERY_RADIUS_METERS) {
-          const distanceFeet = Math.round(distance * 3.28084);
-          return NextResponse.json({
-            error: "LOCATION_MISMATCH",
-            message: `You are approximately ${distanceFeet} feet away from the delivery address. Please go to the correct location to confirm delivery.`,
-            distance: Math.round(distance),
-            maxDistance: DELIVERY_RADIUS_METERS,
-            targetAddress: `${orderAddress.street}, ${orderAddress.city} ${orderAddress.zip}`,
-          }, { status: 403 });
-        }
+      console.log("[confirm-delivery] Geocode result:", coords ? `${coords.lat},${coords.lng}` : "NULL");
+
+      if (!coords) {
+        // Geocoding failed — could be no API key, wrong key, or Geocoding API not enabled
+        return NextResponse.json({
+          error: "GEOCODE_FAILED",
+          message: "Could not verify delivery location. Make sure NEXT_PUBLIC_GOOGLE_MAPS_KEY is set and Geocoding API is enabled in Google Cloud Console.",
+          debug: {
+            address: fullAddr,
+            hasMapsKey: !!process.env.NEXT_PUBLIC_GOOGLE_MAPS_KEY,
+          },
+        }, { status: 500 });
       }
+
+      const distance = haversineDistance(lat, lng, coords.lat, coords.lng);
+      console.log("[confirm-delivery] Distance:", Math.round(distance), "meters (admin at", lat, lng, ")");
+
+      if (distance > DELIVERY_RADIUS_METERS) {
+        const distanceFeet = Math.round(distance * 3.28084);
+        return NextResponse.json({
+          error: "LOCATION_MISMATCH",
+          message: `You are approximately ${distanceFeet} feet away from the delivery address. Please go to the correct location to confirm delivery.`,
+          distance: Math.round(distance),
+          maxDistance: DELIVERY_RADIUS_METERS,
+          targetAddress: fullAddr,
+        }, { status: 403 });
+      }
+    } else {
+      console.log("[confirm-delivery] No address on order, skipping location check. Address field:", JSON.stringify(orderAddress));
     }
 
     // Upload photo to Firebase Storage
