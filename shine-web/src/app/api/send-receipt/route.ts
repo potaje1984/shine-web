@@ -59,6 +59,8 @@ export async function POST(request: Request) {
     }
 
     const privateKey = parsePrivateKey(rawKey);
+    console.log("[send-receipt] Firebase Admin init:", !!clientEmail, !!projectId, "key length:", privateKey.length);
+
     const { initializeApp: initApp, getApps, cert } = await import("firebase-admin/app");
     const { getFirestore: getAdminDb } = await import("firebase-admin/firestore");
 
@@ -67,6 +69,7 @@ export async function POST(request: Request) {
     const adminDb = getAdminDb(app);
 
     // 1. Fetch order
+    console.log("[send-receipt] Fetching order:", orderId);
     const orderDoc = await adminDb.collection("orders").doc(orderId).get();
     if (!orderDoc.exists) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
@@ -74,6 +77,7 @@ export async function POST(request: Request) {
     const orderData = { id: orderDoc.id, ...orderDoc.data() } as OrderDoc;
 
     // 2. Fetch customer
+    console.log("[send-receipt] Fetching user:", orderData.userId);
     const userDoc = await adminDb.collection("users").doc(orderData.userId).get();
     if (!userDoc.exists) {
       return NextResponse.json({ error: "Customer not found" }, { status: 404 });
@@ -84,6 +88,7 @@ export async function POST(request: Request) {
     }
 
     // 3. Send receipt
+    console.log("[send-receipt] Sending receipt to:", userData.email, "lang:", lang);
     const sent = await sendReceiptEmail({
       order: orderData,
       customer: {
@@ -95,12 +100,14 @@ export async function POST(request: Request) {
     });
 
     if (sent) {
+      console.log("[send-receipt] SUCCESS - Receipt sent to", userData.email);
       return NextResponse.json({ success: true, message: "Receipt sent to " + userData.email });
     } else {
+      console.error("[send-receipt] FAIL - sendReceiptEmail returned false");
       return NextResponse.json({ error: "Failed to send receipt" }, { status: 500 });
     }
   } catch (err: any) {
-    console.error("[api/send-receipt] Error:", err);
+    console.error("[send-receipt] Error:", err);
     return NextResponse.json(
       { error: err.message || "Failed to send receipt" },
       { status: 500 }
