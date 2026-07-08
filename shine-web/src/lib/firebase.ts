@@ -213,13 +213,12 @@ export function getFirebaseInitError(): string | null {
  * null = todo bien.
  */
 export function getFirebaseConfigError(): string | null {
-  if (typeof window === "undefined") return null; // SSR — no podemos diagnosticar en servidor
-  const w = window as unknown as { __FIREBASE_CONFIG__?: FirebaseConfig };
-  const cfg = w.__FIREBASE_CONFIG__;
-  if (!cfg) return "Firebase is not configured. The .env.local file is missing in the Codespace.";
-  if (!cfg.apiKey) return "Firebase API Key is empty. Check your .env.local file.";
-  if (!cfg.projectId) return "Firebase Project ID is empty. Check your .env.local file.";
-  if (!cfg.authDomain) return "Firebase Auth Domain is empty. Check your .env.local file.";
+  if (typeof window === "undefined") return null;
+  const cfg = getFirebaseConfig();
+  if (!cfg) return "Firebase is not configured. Check your environment variables.";
+  if (!cfg.apiKey) return "Firebase API Key is empty. Check your environment variables.";
+  if (!cfg.projectId) return "Firebase Project ID is empty. Check your environment variables.";
+  if (!cfg.authDomain) return "Firebase Auth Domain is empty. Check your environment variables.";
   return null;
 }
 
