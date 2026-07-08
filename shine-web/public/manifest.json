@@ -1,7 +1,7 @@
 {
-  "name": "Shine - Lavandería Premium",
+  "name": "Shine - Premium Laundry & Cleaning",
   "short_name": "Shine",
-  "description": "Servicio de lavandería premium con recolección a domicilio",
+  "description": "Premium laundry service with free home pickup, 24h delivery, and eco-friendly process",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

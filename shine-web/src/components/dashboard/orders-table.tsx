@@ -140,7 +140,7 @@ export function OrdersTable() {
                     <p className="text-xs text-muted-foreground">
                       {isCleaning
                         ? order.quotedPrice
-                          ? `$${order.quotedPrice.toFixed(2)} (cotizado)`
+                          ? `$${order.quotedPrice.toFixed(2)} (${t("cleaning.customer.quoted") || "quoted"})`
                           : t("cleaning.customer.awaitingQuote")
                         : weight
                           ? `${weight} lbs`

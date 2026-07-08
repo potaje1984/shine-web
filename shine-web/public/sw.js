@@ -16,7 +16,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  // Delete ALL old caches to prevent stale JS from being served
+  // Delete old caches only (keep current)
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(
@@ -24,10 +24,7 @@ self.addEventListener("activate", (event) => {
           .filter((key) => key !== CACHE_NAME)
           .map((key) => caches.delete(key))
       )
-    ).then(() => {
-      // Also clear the current cache so fresh assets are fetched
-      return caches.delete(CACHE_NAME);
-    })
+    )
   );
   // Take control of all clients immediately
   (self as unknown as ServiceWorkerGlobalScope).clients.claim();

@@ -1,14 +1,32 @@
 User-agent: Googlebot
 Allow: /
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /api/
+Disallow: /login
+Disallow: /register
+Disallow: /forgot-password
 
 User-agent: Bingbot
 Allow: /
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /api/
 
 User-agent: Twitterbot
 Allow: /
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /api/
 
 User-agent: facebookexternalhit
 Allow: /
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /api/
 
 User-agent: *
 Allow: /
+Disallow: /dashboard/
+Disallow: /admin/
+Disallow: /api/

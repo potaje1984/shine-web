@@ -8,7 +8,7 @@ import type { NextRequest } from "next/server";
  * Real auth/role verification happens client-side in AuthGuard.
  */
 
-const PUBLIC_PATHS = ["/", "/login", "/register", "/test-firebase", "/api"];
+const PUBLIC_PATHS = ["/", "/login", "/register", "/forgot-password", "/api"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

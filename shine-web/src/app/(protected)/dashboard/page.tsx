@@ -278,8 +278,8 @@ export default function DashboardPage() {
                       <p className="text-xs text-muted-foreground">
                         {isCleaning
                           ? order.quotedPrice
-                            ? `$${order.quotedPrice.toFixed(2)} (cotizado)`
-                            : "Esperando cotización"
+                            ? `$${order.quotedPrice.toFixed(2)} (${t("cleaning.customer.quoted") || "quoted"})`
+                            : (t("cleaning.customer.awaitingQuote") || "Awaiting quote")
                           : order.weight
                             ? `${order.weight} lbs · $${order.total.toFixed(2)}`
                             : `$${order.total.toFixed(2)}`
