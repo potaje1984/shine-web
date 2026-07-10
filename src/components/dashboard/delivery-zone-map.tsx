@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import "leaflet/dist/leaflet.css";
 import { MapContainer, TileLayer, Polygon, CircleMarker, useMap, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import { MapPin, CheckCircle2, XCircle, Loader2, LocateFixed } from "lucide-react";
