@@ -2,33 +2,14 @@
 
 /**
  * DeliveryZoneMap.tsx
- * Interactive map that shows the delivery zone polygon.
- * Uses browser geolocation to show if user is IN (green) or OUT (red) of the zone.
- * Also allows clicking/tapping on the map to check a specific address.
+ * Shows delivery zone map using OpenStreetMap iframe (no external JS libraries).
+ * Uses browser geolocation API to check if user is IN (green) or OUT (red) of zone.
  */
 
 import { useEffect, useState, useCallback } from "react";
-import "leaflet/dist/leaflet.css";
-import { MapContainer, TileLayer, Polygon, CircleMarker, useMap, useMapEvents } from "react-leaflet";
-import L from "leaflet";
 import { MapPin, CheckCircle2, XCircle, Loader2, LocateFixed } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  DELIVERY_ZONE_POLYGON,
-  MAP_CENTER,
-  MAP_DEFAULT_ZOOM,
-  isInDeliveryZone,
-  ZONE_CENTER,
-} from "@/lib/delivery-zone";
-
-// Fix Leaflet default marker icon
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-});
+import { isInDeliveryZone, ZONE_CENTER } from "@/lib/delivery-zone";
 
 interface DeliveryZoneMapProps {
   onZoneStatusChange?: (inZone: boolean, lat: number, lng: number) => void;
@@ -37,76 +18,53 @@ interface DeliveryZoneMapProps {
 
 type ZoneStatus = "loading" | "in_zone" | "out_zone" | "error" | "idle";
 
-function MapController({ center, zoom }: { center: [number, number]; zoom: number }) {
-  const map = useMap();
-  useEffect(() => {
-    map.setView(center, zoom);
-  }, [map, center, zoom]);
-  return null;
-}
-
-function ClickHandler({ onClick }: { onClick: (lat: number, lng: number) => void }) {
-  useMapEvents({
-    click(e) {
-      onClick(e.latlng.lat, e.latlng.lng);
-    },
-  });
-  return null;
-}
-
 export function DeliveryZoneMap({ onZoneStatusChange, className = "" }: DeliveryZoneMapProps) {
   const [status, setStatus] = useState<ZoneStatus>("idle");
-  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
-  const [markerPos, setMarkerPos] = useState<[number, number] | null>(null);
-  const [inZone, setInZone] = useState<boolean | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [mapUrl, setMapUrl] = useState("");
 
-  const checkLocation = useCallback(
-    (lat: number, lng: number) => {
-      const inside = isInDeliveryZone(lat, lng);
-      setInZone(inside);
-      setMarkerPos([lat, lng]);
-      setStatus(inside ? "in_zone" : "out_zone");
-      setErrorMsg(null);
-      onZoneStatusChange?.(inside, lat, lng);
-    },
-    [onZoneStatusChange]
-  );
+  // Build the iframe URL - shows North NJ area
+  useEffect(() => {
+    const [lat, lng] = ZONE_CENTER;
+    setMapUrl(
+      `https://www.openstreetmap.org/export/embed.html?bbox=${lng - 1.2}%2C${lat - 0.6}%2C${lng + 0.8}%2C${lat + 0.6}&layer=mapnik&marker=${lat}%2C${lng}`
+    );
+  }, []);
 
   const locateUser = useCallback(() => {
-    if (!navigator.geolocation) {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
       setStatus("error");
       setErrorMsg("Tu navegador no soporta geolocalización");
       return;
     }
     setStatus("loading");
     setErrorMsg(null);
+
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const { latitude, longitude } = position.coords;
-        setUserLocation([latitude, longitude]);
-        checkLocation(latitude, longitude);
+        const inside = isInDeliveryZone(latitude, longitude);
+        setStatus(inside ? "in_zone" : "out_zone");
+        onZoneStatusChange?.(inside, latitude, longitude);
+
+        // Update map to center on user location
+        setMapUrl(
+          `https://www.openstreetmap.org/export/embed.html?bbox=${longitude - 0.15}%2C${latitude - 0.1}%2C${longitude + 0.15}%2C${latitude + 0.1}&layer=mapnik&marker=${latitude}%2C${longitude}`
+        );
       },
       (err) => {
         setStatus("error");
-        switch (err.code) {
-          case err.PERMISSION_DENIED:
-            setErrorMsg("Permiso de ubicación denegado. Toca el mapa para verificar.");
-            break;
-          case err.POSITION_UNAVAILABLE:
-            setErrorMsg("No se pudo obtener tu ubicación. Toca el mapa.");
-            break;
-          case err.TIMEOUT:
-            setErrorMsg("Tiempo agotado. Intenta de nuevo.");
-            break;
-          default:
-            setErrorMsg("Error al obtener ubicación. Toca el mapa.");
+        if (err.code === err.PERMISSION_DENIED) {
+          setErrorMsg("Permiso de ubicación denegado. Actívalo en tu navegador.");
+        } else {
+          setErrorMsg("No se pudo obtener tu ubicación. Intenta de nuevo.");
         }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     );
-  }, [checkLocation]);
+  }, [onZoneStatusChange]);
 
+  // Auto-detect on mount
   useEffect(() => {
     locateUser();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,73 +113,43 @@ export function DeliveryZoneMap({ onZoneStatusChange, className = "" }: Delivery
         {status === "idle" && (
           <div className="text-xs text-muted-foreground flex items-center gap-1.5">
             <MapPin className="h-3.5 w-3.5" />
-            Toca el mapa o usa tu ubicación
+            Verificando tu ubicación...
           </div>
         )}
       </div>
 
-      {/* Map */}
+      {/* Map iframe */}
       <div className="relative rounded-xl overflow-hidden border border-white/10 h-[280px]">
-        <MapContainer
-          center={MAP_CENTER}
-          zoom={MAP_DEFAULT_ZOOM}
-          className="h-full w-full z-0"
-          zoomControl={false}
-          attributionControl={false}
-        >
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-
-          {/* Delivery zone polygon */}
-          <Polygon
-            positions={DELIVERY_ZONE_POLYGON}
-            pathOptions={{
-              color: "#22c55e",
-              fillColor: "#22c55e",
-              fillOpacity: 0.12,
-              weight: 2,
-              dashArray: "6 4",
-            }}
+        {mapUrl ? (
+          <iframe
+            src={mapUrl}
+            className="w-full h-full border-0"
+            title="Zona de entrega Shine"
+            loading="lazy"
           />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-white/[0.02]">
+            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+          </div>
+        )}
 
-          <ClickHandler onClick={checkLocation} />
-
-          {/* User GPS location */}
-          {userLocation && !markerPos && (
-            <CircleMarker
-              center={userLocation}
-              radius={8}
-              pathOptions={{
-                color: "#3b82f6",
-                fillColor: "#3b82f6",
-                fillOpacity: 0.4,
-                weight: 2,
-              }}
-            />
-          )}
-
-          {/* Selected/checked marker */}
-          {markerPos && (
-            <CircleMarker
-              center={markerPos}
-              radius={10}
-              pathOptions={{
-                color: inZone ? "#22c55e" : "#ef4444",
-                fillColor: inZone ? "#22c55e" : "#ef4444",
-                fillOpacity: 0.35,
-                weight: 3,
-              }}
-            />
-          )}
-
-          {markerPos && <MapController center={markerPos} zoom={13} />}
-          {!markerPos && status === "idle" && <MapController center={ZONE_CENTER} zoom={10} />}
-        </MapContainer>
+        {/* Zone overlay indicator */}
+        {status === "in_zone" && (
+          <div className="absolute top-3 right-3 bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg">
+            ✓ EN ZONA
+          </div>
+        )}
+        {status === "out_zone" && (
+          <div className="absolute top-3 right-3 bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg">
+            ✗ FUERA DE ZONA
+          </div>
+        )}
       </div>
 
       {/* Out of zone warning */}
       {status === "out_zone" && (
         <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-xs text-red-300">
-          Tu ubicación está fuera de nuestra zona de entrega. Actualmente solo servimos el norte de Nueva Jersey. Por favor selecciona una dirección dentro de la zona verde del mapa.
+          Tu ubicación está fuera de nuestra zona de entrega. Actualmente solo servimos el norte de Nueva Jersey. Por favor selecciona una dirección dentro de la zona.
         </div>
       )}
     </div>
