@@ -43,6 +43,28 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // NUCLEAR cache buster: kills any existing Service Worker and all caches.
+  // Runs before React hydrates. The old SW was cache-first and serving stale JS.
+  // After reload, no SW will be active — all requests go to network.
+  const swBusterScript = `
+    (function(){
+      if('serviceWorker' in navigator){
+        navigator.serviceWorker.getRegistrations().then(function(regs){
+          if(regs && regs.length > 0){
+            Promise.all(regs.map(function(r){ return r.unregister(); })).then(function(){
+              if('caches' in window){
+                caches.keys().then(function(ks){
+                  return Promise.all(ks.map(function(k){ return caches.delete(k); }));
+                }).catch(function(){});
+              }
+              window.location.reload();
+            });
+          }
+        }).catch(function(){});
+      }
+    })();
+  `.trim();
+
   const firebaseConfigScript = `
     window.__FIREBASE_CONFIG__ = ${JSON.stringify({
       apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY || "",
@@ -58,12 +80,14 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: swBusterScript }} />
         <script dangerouslySetInnerHTML={{ __html: firebaseConfigScript }} />
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
         <meta name="theme-color" content="#a855f7" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <link rel="manifest" href="/manifest.json" />
+        {/* PWA manifest disabled — Service Worker was caching stale JS.
+            Re-enable after implementing a proper cache-busting strategy. */}
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}

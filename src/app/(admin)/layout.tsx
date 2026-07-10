@@ -19,9 +19,11 @@ import { cn } from "@/lib/utils";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { useAuth } from "@/hooks/use-auth";
 import { useNotifications, requestNotificationPermission } from "@/hooks/use-notifications";
-import { usePwaRegister } from "@/hooks/use-pwa-register";
+// PWA disabled — Service Worker was caching stale JS
+// import { usePwaRegister } from "@/hooks/use-pwa-register";
 import { useTranslation } from "@/lib/i18n";
-import { PwaInstallPrompt } from "@/components/pwa-install-prompt";
+// PWA disabled
+// import { PwaInstallPrompt } from "@/components/pwa-install-prompt";
 import { useState, useEffect } from "react";
 
 const NAV_ITEMS = [
@@ -44,7 +46,8 @@ export default function AdminLayout({
   const [bannerDismissed, setBannerDismissed] = useState(false);
 
   // Register service worker for PWA
-  usePwaRegister();
+  // PWA disabled — no service worker
+  // usePwaRegister();
 
   // Show notification permission banner once (non-blocking for admin)
   useEffect(() => {
@@ -73,7 +76,8 @@ export default function AdminLayout({
   return (
     <AuthGuard requireAdmin>
       {/* PWA install prompt */}
-      <PwaInstallPrompt />
+      {/* PWA disabled */}
+      {/* <PwaInstallPrompt /> */}
 
       <div className="flex h-dvh flex-col overflow-hidden bg-background">
         {/* Notification Permission Banner (non-blocking for admin) */}

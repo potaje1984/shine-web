@@ -10,7 +10,8 @@ import { AuthGuard } from "@/components/auth/auth-guard";
 import { ProfileCompletionGate } from "@/components/auth/profile-completion-gate";
 import { useAuth } from "@/hooks/use-auth";
 import { useNotifications } from "@/hooks/use-notifications";
-import { usePwaRegister } from "@/hooks/use-pwa-register";
+// PWA disabled — Service Worker was caching stale JS, preventing updates
+// import { usePwaRegister } from "@/hooks/use-pwa-register";
 import { useTranslation } from "@/lib/i18n";
 import { NotificationGate } from "@/components/notification-gate";
 import { PwaInstallPrompt } from "@/components/pwa-install-prompt";
@@ -32,8 +33,7 @@ export default function ProtectedLayout({
   const { t } = useTranslation();
   const { unreadCount } = useNotifications();
 
-  // Register service worker for PWA
-  usePwaRegister();
+  // PWA disabled — no service worker registration
 
   return (
     <AuthGuard requireCustomer>
