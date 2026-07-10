@@ -63,7 +63,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
 import { StripeProvider } from "@/components/payment/stripe-provider";
 import { StripeCardInput } from "@/components/payment/stripe-card-input";
-import { DeliveryZoneMap } from "./delivery-zone-map-loader";
+import { DeliveryZoneMap } from "./delivery-zone-map";
 
 const CLEANING_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   standard: Sparkles,
