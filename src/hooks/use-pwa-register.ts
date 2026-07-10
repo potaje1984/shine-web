@@ -3,7 +3,8 @@
 /**
  * usePwaRegister.ts
  * Registers the service worker on mount to enable PWA installability.
- * IMPORTANT: First unregisters any existing SW to force a fresh cache.
+ * Forces a page reload when a new service worker is detected to ensure
+ * users always get the latest deployed code (not stale cached versions).
  */
 
 import { useEffect } from "react";
@@ -26,6 +27,36 @@ export function usePwaRegister() {
           .register("/sw.js")
           .then((reg) => {
             console.log("[PWA] Service Worker registered:", reg.scope);
+
+            // If the SW is already controlling the page, check for updates
+            if (navigator.serviceWorker.controller) {
+              reg.addEventListener("updatefound", () => {
+                const newWorker = reg.installing;
+                if (newWorker) {
+                  newWorker.addEventListener("statechange", () => {
+                    if (
+                      newWorker.state === "activated" &&
+                      navigator.serviceWorker.controller !== newWorker
+                    ) {
+                      console.log("[PWA] New SW activated, reloading page...");
+                      window.location.reload();
+                    }
+                  });
+                }
+              });
+
+              // Also check for updates immediately
+              reg.update().catch(() => {});
+            }
+
+            // Wait for the new SW to claim this client, then reload
+            // to ensure fresh assets are loaded
+            if (!navigator.serviceWorker.controller) {
+              navigator.serviceWorker.addEventListener("controllerchange", () => {
+                console.log("[PWA] New controller claimed, reloading...");
+                window.location.reload();
+              });
+            }
           })
           .catch((err) => {
             console.warn("[PWA] Service Worker registration failed:", err);

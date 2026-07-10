@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-const CACHE_NAME = "shine-v2";
+const CACHE_NAME = "shine-v3";
 
 // Assets to pre-cache when the SW installs
 const PRECACHE_URLS = ["/", "/login", "/manifest.json", "/shine-logo.png"];
@@ -33,7 +33,8 @@ self.addEventListener("activate", (event) => {
   (self as unknown as ServiceWorkerGlobalScope).clients.claim();
 });
 
-// Network-first for API calls, cache-first for static assets
+// NETWORK-FIRST for everything — never serve stale cached JS/CSS/HTML
+// This ensures users always get the latest deployed code
 self.addEventListener("fetch", (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -42,31 +43,21 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
   if (url.origin !== self.location.origin) return;
 
-  // Firebase / API calls — network first
-  if (
-    url.pathname.startsWith("/api/") ||
-    url.hostname.includes("firebaseio.com") ||
-    url.hostname.includes("googleapis.com")
-  ) {
-    event.respondWith(
-      fetch(request).catch(() => caches.match(request))
-    );
-    return;
-  }
-
-  // Static assets — cache first, then network
+  // Network-first for ALL same-origin requests
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        // Cache successful responses
+    fetch(request)
+      .then((response) => {
+        // Cache successful responses for offline support
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         }
         return response;
-      });
-    })
+      })
+      .catch(() => {
+        // Only fall back to cache if offline
+        return caches.match(request);
+      })
   );
 });
 
