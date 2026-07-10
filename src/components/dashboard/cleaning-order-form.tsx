@@ -24,6 +24,7 @@ import {
   PaintBucket,
   Truck,
   Hammer,
+  MapPin,
 } from "lucide-react";
 
 import { cleaningFormSchema, type CleaningFormValues } from "@/lib/schemas";
@@ -186,6 +187,17 @@ export function CleaningOrderForm({ onSubmit, onCancel, defaultAddress, userEmai
           <div className="rounded-lg bg-red-500/10 border border-red-500/20 p-3 text-sm text-red-400">{submitError}</div>
         )}
 
+        {/* ── Delivery Zone Map (TOP - first thing user sees) ── */}
+        <div className="space-y-2">
+          <FormLabel className="text-base flex items-center gap-2">
+            <MapPin className="h-4 w-4" />
+            Zona de entrega
+          </FormLabel>
+          <DeliveryZoneMap
+            onZoneStatusChange={(inZone) => setAddressInZone(inZone)}
+          />
+        </div>
+
         <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
           <div className="flex items-start gap-3">
             <Home className="h-5 w-5 text-primary mt-0.5 shrink-0" />
@@ -307,16 +319,7 @@ export function CleaningOrderForm({ onSubmit, onCancel, defaultAddress, userEmai
           </div>
         </div>
 
-        {/* ── Delivery Zone Map ── */}
-        <div className="space-y-2">
-          <FormLabel className="text-base flex items-center gap-2">
-            Zona de entrega
-          </FormLabel>
-          <DeliveryZoneMap
-            onZoneStatusChange={(inZone) => setAddressInZone(inZone)}
-          />
-        </div>
-
+        {/* ── Notes ── */}
         <FormField control={form.control} name="notes" render={({ field }) => (
           <FormItem>
             <FormLabel>{t("dashboard.orderForm.additionalNotes")}</FormLabel>

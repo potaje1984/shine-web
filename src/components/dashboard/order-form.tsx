@@ -27,6 +27,7 @@ import {
   Check,
   CreditCard,
   Banknote,
+  MapPin,
 } from "lucide-react";
 
 import { orderFormSchema, type OrderFormValues } from "@/lib/schemas";
@@ -214,6 +215,17 @@ export function OrderForm({ onSubmit, onCancel, defaultAddress, userEmail }: Ord
             {submitError}
           </div>
         )}
+
+        {/* ── Delivery Zone Map (TOP - first thing user sees) ── */}
+        <div className="space-y-2">
+          <FormLabel className="text-base flex items-center gap-2">
+            <MapPin className="h-4 w-4" />
+            Zona de entrega
+          </FormLabel>
+          <DeliveryZoneMap
+            onZoneStatusChange={(inZone) => setAddressInZone(inZone)}
+          />
+        </div>
 
         {/* ── Service type ── */}
         <FormField
@@ -473,16 +485,6 @@ export function OrderForm({ onSubmit, onCancel, defaultAddress, userEmail }: Ord
               )}
             />
           </div>
-        </div>
-
-        {/* ── Delivery Zone Map ── */}
-        <div className="space-y-2">
-          <FormLabel className="text-base flex items-center gap-2">
-            Zona de entrega
-          </FormLabel>
-          <DeliveryZoneMap
-            onZoneStatusChange={(inZone) => setAddressInZone(inZone)}
-          />
         </div>
 
         {/* ── Notes ── */}
