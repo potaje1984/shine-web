@@ -63,6 +63,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
 import { StripeProvider } from "@/components/payment/stripe-provider";
 import { StripeCardInput } from "@/components/payment/stripe-card-input";
+import { DeliveryZoneMap } from "./delivery-zone-map-loader";
 
 const CLEANING_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
   standard: Sparkles,
@@ -88,6 +89,7 @@ export function CleaningOrderForm({ onSubmit, onCancel, defaultAddress, userEmai
   const [savedSetupIntentId, setSavedSetupIntentId] = useState<string | null>(null);
   const [savedCustomerId, setSavedCustomerId] = useState<string | null>(null);
   const [cardError, setCardError] = useState<string | null>(null);
+  const [addressInZone, setAddressInZone] = useState<boolean | null>(null);
   const { t } = useTranslation();
 
   useEffect(() => { setClientReady(true); }, []);
@@ -122,6 +124,13 @@ export function CleaningOrderForm({ onSubmit, onCancel, defaultAddress, userEmai
 
   async function handleSubmit(data: CleaningFormValues) {
     setSubmitError(null);
+
+    // Block if we know user is out of delivery zone
+    if (addressInZone === false) {
+      setSubmitError("Tu ubicación está fuera de nuestra zona de entrega. Selecciona una dirección dentro de la zona verde del mapa.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       if (data.paymentMethod === "card" && savedPaymentMethodId) {
@@ -296,6 +305,16 @@ export function CleaningOrderForm({ onSubmit, onCancel, defaultAddress, userEmai
               </FormItem>
             )} />
           </div>
+        </div>
+
+        {/* ── Delivery Zone Map ── */}
+        <div className="space-y-2">
+          <FormLabel className="text-base flex items-center gap-2">
+            Zona de entrega
+          </FormLabel>
+          <DeliveryZoneMap
+            onZoneStatusChange={(inZone) => setAddressInZone(inZone)}
+          />
         </div>
 
         <FormField control={form.control} name="notes" render={({ field }) => (

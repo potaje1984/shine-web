@@ -68,6 +68,7 @@ import { cn } from "@/lib/utils";
 import { useTranslation } from "@/lib/i18n";
 import { StripeProvider } from "@/components/payment/stripe-provider";
 import { StripeCardInput } from "@/components/payment/stripe-card-input";
+import { DeliveryZoneMap } from "./delivery-zone-map-loader";
 
 interface OrderFormProps {
   onSubmit: (data: OrderFormValues & { stripePaymentMethodId?: string; stripeSetupIntentId?: string; stripeCustomerId?: string }) => Promise<void>;
@@ -86,6 +87,7 @@ export function OrderForm({ onSubmit, onCancel, defaultAddress, userEmail }: Ord
   const [savedSetupIntentId, setSavedSetupIntentId] = useState<string | null>(null);
   const [savedCustomerId, setSavedCustomerId] = useState<string | null>(null);
   const [cardError, setCardError] = useState<string | null>(null);
+  const [addressInZone, setAddressInZone] = useState<boolean | null>(null);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -138,6 +140,13 @@ export function OrderForm({ onSubmit, onCancel, defaultAddress, userEmail }: Ord
 
   async function handleSubmit(data: OrderFormValues) {
     setSubmitError(null);
+
+    // Block if we know user is out of delivery zone
+    if (addressInZone === false) {
+      setSubmitError("Tu ubicación está fuera de nuestra zona de entrega. Selecciona una dirección dentro de la zona verde del mapa.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       // If card payment, include stripe data
@@ -464,6 +473,16 @@ export function OrderForm({ onSubmit, onCancel, defaultAddress, userEmail }: Ord
               )}
             />
           </div>
+        </div>
+
+        {/* ── Delivery Zone Map ── */}
+        <div className="space-y-2">
+          <FormLabel className="text-base flex items-center gap-2">
+            Zona de entrega
+          </FormLabel>
+          <DeliveryZoneMap
+            onZoneStatusChange={(inZone) => setAddressInZone(inZone)}
+          />
         </div>
 
         {/* ── Notes ── */}
